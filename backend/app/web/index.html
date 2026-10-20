@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>PocketPaaS 控制台</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout-shell">
+    <!-- 左侧固定极简导航栏 -->
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand">
+          <div class="logo">
+            <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true" focusable="false">
+              <g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 15.5 V6.5" />
+                <path d="M11.3 11.2 L16 6.5 L20.7 11.2" />
+                <path d="M7.5 16 L7.5 20 Q7.5 25 12.5 25 L19.5 25 Q24.5 25 24.5 20 L24.5 16" />
+              </g>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <h1>PocketPaaS</h1>
+            <span class="brand-suffix">容器云控制台</span>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="newAppBtn">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 5v14" /><path d="M5 12h14" />
+          </svg>
+          <span>新建应用</span>
+        </button>
+
+        <nav class="side-nav" id="sideNav" aria-label="控制台导航">
+          <!-- 分组 1：工作台 -->
+          <div class="nav-section-title">工作台</div>
+          <button class="nav-item active" data-view="apps" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            <span>应用实例</span>
+          </button>
+
+          <button class="nav-item" data-view="routes" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="6" cy="6" r="3" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="12" cy="18" r="3" />
+              <path d="M8.5 7.5L11 15.5M15.5 7.5L13 15.5" />
+            </svg>
+            <span>网关路由</span>
+          </button>
+
+          <button class="nav-item" data-view="templates" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+            </svg>
+            <span>模板与指南</span>
+          </button>
+
+          <button class="nav-item" data-view="files" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7a2 2 0 0 1 2-2h3.6l1.8 2.2H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" />
+              <path d="M4 10h16" />
+            </svg>
+            <span>项目文件管理</span>
+          </button>
+
+          <!-- 分组 2：基础设施 -->
+          <div class="nav-section-title nav-section-spaced">基础设施</div>
+          <button class="nav-item" data-view="nodes" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="7" rx="2" />
+              <rect x="2" y="14" width="20" height="7" rx="2" />
+              <circle cx="6" cy="6.5" r="1" /><circle cx="6" cy="17.5" r="1" />
+            </svg>
+            <span>资源与节点</span>
+          </button>
+
+          <button class="nav-item" data-view="alerts" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3a5.5 5.5 0 0 0-5.5 5.5c0 4-1.5 5.5-2 6h15c-.5-.5-2-2-2-6A5.5 5.5 0 0 0 12 3z" />
+              <path d="M10 18.5a2 2 0 0 0 4 0" />
+            </svg>
+            <span>告警中心</span>
+            <span class="nav-badge hidden" id="alertsNavBadge"></span>
+          </button>
+
+          <!-- 分组 3：系统设置 -->
+          <div class="nav-section-title nav-section-spaced">系统设置</div>
+          <button class="nav-item" data-view="audit" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+              <path d="M14 3v5h5" />
+              <path d="M8 13h8M8 17h5" />
+            </svg>
+            <span>审计日志</span>
+          </button>
+
+          <button class="nav-item hidden" id="usersBtn" data-view="users" type="button" title="管理用户与容器">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
+              <path d="M16 11a3 3 0 1 0 0-6" /><path d="M17.5 19c0-2-.7-3.7-2-4.6" />
+            </svg>
+            <span>用户管理</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="env-status-box">
+          <span class="env-title">运行环境</span>
+          <div class="sub" id="modeBadge">加载中…</div>
+        </div>
+
+        <div class="user-box hidden" id="userBox">
+          <span class="user-avatar" id="userAvatar">A</span>
+          <span class="user-meta">
+            <span class="user-name" id="userName">用户</span>
+            <span class="role-tag hidden" id="userRole">管理员</span>
+          </span>
+          <button class="btn btn-ghost btn-icon-sm" id="logoutBtn" title="退出登录" aria-label="退出登录">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l-5-5 5-5" /><path d="M5 12h11" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧主工作区 -->
+    <div class="main-workspace">
+      <!-- 顶栏 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h2 class="topbar-title" id="workspaceTitle">应用交付与实例管理</h2>
+          <span class="count-pill muted" id="listHint"></span>
+        </div>
+
+        <div class="topbar-actions">
+          <div class="toolbar hidden" id="ownerFilter">
+            <span class="muted">按所属用户筛选</span>
+            <select class="input select-sm" id="ownerSelect">
+              <option value="">全部用户</option>
+            </select>
+          </div>
+
+          <button class="btn btn-ghost" id="refreshBtn" title="刷新列表">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 5v6h-6" />
+            </svg>
+            <span>刷新</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="container">
+        <!-- ==================== 视图 1：应用实例 ==================== -->
+        <div class="ws-view active" data-wsview="apps">
+          <section class="overview" aria-label="平台运行概览">
+            <section class="stats" id="stats"></section>
+          </section>
+
+          <section class="panel" id="appsPanel">
+            <div id="appList" class="app-grid"></div>
+
+            <div id="emptyState" class="empty hidden">
+              <svg class="empty-art" viewBox="0 0 120 96" fill="none" aria-hidden="true">
+                <rect x="14" y="18" width="92" height="64" rx="12" stroke="currentColor" stroke-width="1.8" stroke-dasharray="6 6" opacity=".5" />
+                <path d="M44 44l16-10 16 10v20l-16 10-16-10V44z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                <path d="M44 44l16 10 16-10M60 54v20" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              </svg>
+              <p>还没有应用</p>
+              <p class="muted">点击左侧「新建应用」，上传代码包或填写 Git 地址即可自动构建部署。</p>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 视图 2：网关路由 ==================== -->
+        <div class="ws-view" data-wsview="routes">
+          <section class="stats" id="routeStats"></section>
+
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3>流量转发与端口映射表</h3>
+                
+              </div>
+              <div class="route-filter-wrap">
+                <input type="search" id="routeSearch" class="input select-sm" placeholder="搜索应用 / 子域名 / 端口…" />
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="users-table routes-table">
+                <thead>
+                  <tr>
+                    <th>应用名称</th>
+                    <th>子域名标识</th>
+                    <th>访问入口</th>
+                    <th>端口映射 (宿主 → 容器)</th>
+                    <th>运行状态</th>
+                    <th style="text-align:right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="routesBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 视图 3：模板与指南 ==================== -->
+        <div class="ws-view" data-wsview="templates">
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3>支持的项目类型与自动构建引擎</h3>
+                
+              </div>
+            </div>
+
+            <div class="tpl-grid" id="tplGrid">
+              <div class="tpl-card">
+                <div class="tpl-top">
+                  <span class="tpl-badge py">PYTHON</span>
+                  <span class="tag">默认端口 8000</span>
+                </div>
+                <h4>Python Web 服务 (FastAPI / Flask / Django)</h4>
+                
+                <div class="tpl-meta">
+                  <div class="row"><span class="k">基础镜像</span><span class="v">python:3.12-slim</span></div>
+                  <div class="row"><span class="k">入口探测</span><span class="v">main.py / app.py / wsgi.py</span></div>
+                  <div class="row"><span class="k">托管引擎</span><span class="v">uvicorn (ASGI) / gunicorn (WSGI)</span></div>
+                </div>
+                <button class="btn btn-ghost btn-sm btn-block" data-tpl="python" data-port="8000" data-demo="python-app">使用此模板创建</button>
+              </div>
+
+              <div class="tpl-card">
+                <div class="tpl-top">
+                  <span class="tpl-badge node">NODE.JS</span>
+                  <span class="tag">默认端口 3000</span>
+                </div>
+                <h4>Node.js 服务端应用</h4>
+                
+                <div class="tpl-meta">
+                  <div class="row"><span class="k">基础镜像</span><span class="v">node:20-alpine</span></div>
+                  <div class="row"><span class="k">构建命令</span><span class="v">npm install --omit=dev</span></div>
+                  <div class="row"><span class="k">启动命令</span><span class="v">npm start</span></div>
+                </div>
+                <button class="btn btn-ghost btn-sm btn-block" data-tpl="node" data-port="3000" data-demo="node-demo">使用此模板创建</button>
+              </div>
+
+              <div class="tpl-card">
+                <div class="tpl-top">
+                  <span class="tpl-badge static">STATIC</span>
+                  <span class="tag">默认端口 8000</span>
+                </div>
+                <h4>纯静态站点 (HTML / CSS / JS)</h4>
+                
+                <div class="tpl-meta">
+                  <div class="row"><span class="k">基础镜像</span><span class="v">nginx:alpine</span></div>
+                  <div class="row"><span class="k">托管目录</span><span class="v">/usr/share/nginx/html</span></div>
+                  <div class="row"><span class="k">端口对齐</span><span class="v">自动重写 default.conf 监听端口</span></div>
+                </div>
+                <button class="btn btn-ghost btn-sm btn-block" data-tpl="static" data-port="8000" data-demo="static-site">使用此模板创建</button>
+              </div>
+
+              <div class="tpl-card">
+                <div class="tpl-top">
+                  <span class="tpl-badge custom">CUSTOM</span>
+                  <span class="tag">解析 EXPOSE</span>
+                </div>
+                <h4>自定义 Dockerfile 项目</h4>
+                
+                <div class="tpl-meta">
+                  <div class="row"><span class="k">识别判据</span><span class="v">根目录自带 Dockerfile</span></div>
+                  <div class="row"><span class="k">端口识别</span><span class="v">自动解析 EXPOSE 指令</span></div>
+                  <div class="row"><span class="k">安全检查</span><span class="v">构建前自动扫描特权与敏感挂载</span></div>
+                </div>
+                <button class="btn btn-ghost btn-sm btn-block" data-tpl="custom" data-port="9000" data-demo="custom-service">使用此模板创建</button>
+              </div>
+            </div>
+          </section>
+
+          <div class="guide-split">
+            <section class="surface-card">
+              <div class="surface-head">
+                <div>
+                  <h3>端口自动对齐规范 (paas.json)</h3>
+                  
+                </div>
+                <button class="btn btn-ghost btn-sm" id="copyManifestBtn" type="button">复制示例</button>
+              </div>
+              <p class="guide-text">平台在构建镜像时按以下优先级自动推断并覆盖容器端口：<strong>1. 根目录 <code>paas.json</code> 声明 → 2. 自带 Dockerfile 的 <code>EXPOSE</code> → 3. 项目类型默认端口</strong>。若你的 Node.js 或自定义服务监听了非标准端口，只需在源码根目录放置 <code>paas.json</code>：</p>
+              <pre class="code-block" id="manifestCode">{
+  "port": 3000
+}</pre>
+            </section>
+
+            <section class="surface-card">
+              <div class="surface-head">
+                <div>
+                  <h3>构建与容器运行时安全基线</h3>
+                  
+                </div>
+              </div>
+              <ul class="guide-list">
+                <li><strong>应用命名白名单</strong>：仅允许 1–63 位小写字母、数字与中划线，杜绝容器名与 Nginx 配置注入。</li>
+                <li><strong>Git 源 SSRF 防护</strong>：仅允许 HTTP/HTTPS 协议，自动解析域名并拦截指向本机、内网网段或云元数据的地址。</li>
+                <li><strong>Dockerfile 安全扫描</strong>：禁止 <code>--privileged</code>、<code>--network=host</code>、挂载 <code>docker.sock</code> 或宿主机敏感目录。</li>
+                <li><strong>CGroups 与运行时加固</strong>：强制禁用 Swap 使内存上限硬生效，挂载 <code>no-new-privileges</code>、<code>cap_drop=ALL</code> 与进程数限制（<code>pids_limit</code>）。</li>
+              </ul>
+            </section>
+          </div>
+        </div>
+
+        <!-- ==================== 视图 4：资源与节点 (Infrastructure) ==================== -->
+        <div class="ws-view" data-wsview="nodes">
+          <!-- 节点概览 -->
+          <section class="stats" id="nodeTopStats"></section>
+
+          <!-- 宿主机 CPU 实时折线 -->
+          <section class="surface-card host-cpu-card">
+            <div class="host-head">
+              <span class="host-label">CPU（<span id="hostCpuCores">—</span> 核）</span>
+              <span class="host-value" id="hostCpuValue">0%</span>
+            </div>
+            <div class="host-bar"><i id="hostCpuBar" style="width:0%"></i></div>
+
+            <div class="host-chart" id="hostCpuChart">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polyline id="hostCpuLine" fill="none" stroke="#0284c7" stroke-width="2"
+                          vector-effect="non-scaling-stroke" points="" />
+              </svg>
+              <div class="host-cursor" id="hostCpuCursor"></div>
+            </div>
+            <div class="host-xaxis">
+              <span>← 3 分钟前</span><span>每 2 秒采集一帧</span><span>现在 →</span>
+            </div>
+
+            <p class="host-sub" style="margin-top:12px">系统负载 <span id="hostLoad">— / — / —</span></p>
+          </section>
+
+          <!-- 内存 / 磁盘 -->
+          <div class="host-grid">
+            <section class="surface-card host-mini">
+              <div class="host-head"><span class="host-label">内存</span><span class="host-value" id="hostMemValue">0%</span></div>
+              <div class="host-bar"><i id="hostMemBar" style="width:0%"></i></div>
+              <p class="host-sub" id="hostMemSub">— / —</p>
+            </section>
+            <section class="surface-card host-mini">
+              <div class="host-head"><span class="host-label">磁盘</span><span class="host-value" id="hostDiskValue">0%</span></div>
+              <div class="host-bar"><i id="hostDiskBar" style="width:0%"></i></div>
+              <p class="host-sub" id="hostDiskSub">— / —</p>
+            </section>
+          </div>
+
+          <!-- 运行时间 / 运行容器 -->
+          <div class="host-grid">
+            <section class="surface-card host-stat">
+              <div class="host-label">运行时间</div>
+              <div class="host-big" id="hostUptime">—</div>
+            </section>
+            <section class="surface-card host-stat">
+              <div class="host-label">运行容器</div>
+              <div class="host-big" id="hostContainers">0</div>
+            </section>
+          </div>
+
+          <!-- 容器资源占用 -->
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3>容器资源占用</h3>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="users-table">
+                <thead>
+                  <tr>
+                    <th>容器</th>
+                    <th>状态</th>
+                    <th>CPU</th>
+                    <th>内存</th>
+                    <th>网络&ensp;收 / 发</th>
+                  </tr>
+                </thead>
+                <tbody id="containerStatsBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- 平台资源承诺水位 -->
+          <div class="gauge-grid" id="nodeGauges"></div>
+
+          <div class="guide-split">
+            <section class="surface-card">
+              <div class="surface-head">
+                <div>
+                  <h3>Docker 容器运行时引擎</h3>
+                </div>
+              </div>
+              <div id="dockerDaemonInfo"></div>
+            </section>
+
+            <section class="surface-card">
+              <div class="surface-head">
+                <div>
+                  <h3>应用实例配额分配明细</h3>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table class="users-table">
+                  <thead>
+                    <tr>
+                      <th>应用实例</th>
+                      <th>状态</th>
+                      <th>CPU 配额</th>
+                      <th>内存上限</th>
+                      <th>宿主端口</th>
+                    </tr>
+                  </thead>
+                  <tbody id="nodeQuotaBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ==================== 视图 6：用户管理（仅管理员，全屏内嵌视图） ==================== -->
+        <div class="ws-view" data-wsview="users">
+          <section class="stats" id="userTopStats"></section>
+
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3 id="usersTitle">平台用户列表</h3>
+                <p class="muted" id="usersHint">正在加载用户数据…</p>
+              </div>
+              <button class="btn btn-primary btn-sm" id="addUserBtn" type="button">
+                <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+                <span>新建用户</span>
+              </button>
+            </div>
+
+            <!-- 新建用户内嵌表单 -->
+            <div class="user-form hidden" id="userFormBox">
+              <div class="form-row inline cols-2">
+                <div class="field">
+                  <label>用户名 <span class="req">*</span></label>
+                  <input id="ufUsername" class="input" placeholder="2-32 位字母/数字/_-" />
+                </div>
+                <div class="field">
+                  <label>显示名</label>
+                  <input id="ufDisplay" class="input" placeholder="可选，默认同用户名" />
+                </div>
+              </div>
+              <div class="form-row inline cols-2">
+                <div class="field">
+                  <label>密码 <span class="req">*</span></label>
+                  <input id="ufPassword" class="input" type="password" placeholder="至少 8 位，含字母与数字" />
+                </div>
+                <div class="field">
+                  <label>角色</label>
+                  <select id="ufRole" class="input">
+                    <option value="user">普通用户</option>
+                    <option value="admin">管理员</option>
+                  </select>
+                </div>
+              </div>
+              <div id="ufError" class="alert hidden"></div>
+              <div class="user-form-actions">
+                <button class="btn btn-ghost btn-sm" id="ufCancel" type="button">取消</button>
+                <button class="btn btn-primary btn-sm" id="ufSubmit" type="button">创建</button>
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="users-table">
+                <thead>
+                  <tr>
+                    <th>用户名</th>
+                    <th>显示名</th>
+                    <th>角色</th>
+                    <th>状态</th>
+                    <th>应用数</th>
+                    <th>最近登录</th>
+                    <th style="text-align:right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="usersBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 视图 7：告警中心 ==================== -->
+        <div class="ws-view" data-wsview="alerts">
+          <section class="stats" id="alertStats"></section>
+
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3>阈值告警记录</h3>
+              </div>
+              <div class="toolbar">
+                <select class="input select-sm" id="alertStatusFilter">
+                  <option value="">全部状态</option>
+                  <option value="active" selected>待处理</option>
+                  <option value="acked">已确认</option>
+                  <option value="resolved">已恢复</option>
+                </select>
+                <select class="input select-sm" id="alertLevelFilter">
+                  <option value="">全部级别</option>
+                  <option value="critical">严重</option>
+                  <option value="warning">警告</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="users-table">
+                <thead>
+                  <tr>
+                    <th>级别</th>
+                    <th>告警对象</th>
+                    <th>说明</th>
+                    <th>状态</th>
+                    <th>触发时间</th>
+                    <th>处理信息</th>
+                    <th style="text-align:right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="alertsBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 视图 8：审计日志 ==================== -->
+        <div class="ws-view" data-wsview="audit">
+          <section class="stats" id="auditStats"></section>
+
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3>操作审计记录</h3>
+              </div>
+              <div class="toolbar">
+                <input type="search" id="auditSearch" class="input select-sm" placeholder="搜索操作人 / 对象…" />
+                <select class="input select-sm" id="auditActionFilter">
+                  <option value="">全部动作</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="users-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>操作人</th>
+                    <th>动作</th>
+                    <th>对象</th>
+                    <th>详情</th>
+                    <th>来源 IP</th>
+                  </tr>
+                </thead>
+                <tbody id="auditBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 视图 9：项目文件管理 ==================== -->
+        <div class="ws-view" data-wsview="files">
+          <section class="surface-card">
+            <div class="fm-ctx" id="fmCtx">
+              <div class="fm-ctx-info">
+                <span class="fm-ctx-label">当前项目</span>
+                <div class="fm-ctx-line">
+                  <span class="fm-ctx-name" id="fmCtxName">—</span>
+                  <span id="fmCtxBadge"></span>
+                  <span class="fm-ctx-sub" id="fmCtxSub"></span>
+                </div>
+              </div>
+              <div class="fm-ctx-switch">
+                <button class="btn btn-ghost btn-sm" id="fmSwitchBtn" type="button" aria-haspopup="true" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M8 9l4-4 4 4M16 15l-4 4-4-4" />
+                  </svg>
+                  切换项目
+                </button>
+                <div class="fm-picker hidden" id="fmPicker" role="listbox" aria-label="选择项目">
+                  <div class="fm-picker-head">选择项目<span class="fm-picker-count" id="fmPickerCount"></span></div>
+                  <div class="fm-picker-list" id="fmPickerList"></div>
+                </div>
+              </div>
+            </div>
+            <div id="filesPageMount"></div>
+          </section>
+
+          <section class="surface-card">
+            <div class="surface-head">
+              <div>
+                <h3>容器终端</h3>
+                <p class="muted">直接操作当前项目运行中的容器（root 权限），仅供排障</p>
+              </div>
+              <div class="sh-toolbar">
+                <span class="sh-dot" id="fmShDot"></span>
+                <span class="muted" id="fmShState">未连接</span>
+                <button class="btn btn-ghost btn-sm" id="fmShInterrupt" type="button" title="向容器发送 Ctrl+C">中断</button>
+                <button class="btn btn-ghost btn-sm" id="fmShClear" type="button">清空</button>
+                <button class="btn btn-primary btn-sm" id="fmShToggle" type="button">连接</button>
+              </div>
+            </div>
+            <pre class="sh-screen sh-screen-page" id="fmShScreen" tabindex="0"></pre>
+            <div class="sh-input-row">
+              <span class="sh-prompt">$</span>
+              <input id="fmShInput" class="input sh-input" placeholder="输入命令后回车执行（容器内 /bin/sh）" autocomplete="off" spellcheck="false" disabled />
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- 详情抽屉 -->
+  <div class="drawer-mask hidden" id="drawerMask"></div>
+  <aside class="drawer hidden" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <div class="drawer-head">
+      <div class="drawer-title-wrap">
+        <h2 id="drawerTitle">应用详情</h2>
+        <div class="sub" id="drawerSub"></div>
+      </div>
+      <button class="icon-btn" id="drawerClose" title="关闭" aria-label="关闭详情">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </div>
+
+    <div class="tabs" id="drawerTabs" role="tablist">
+      <button class="tab active" data-tab="overview" role="tab">概览</button>
+      <button class="tab" data-tab="diagnose" role="tab">诊断</button>
+      <button class="tab" data-tab="livelogs" role="tab">实时日志</button>
+      <button class="tab" data-tab="buildlogs" role="tab">构建日志</button>
+      <button class="tab" data-tab="metrics" role="tab">负载曲线</button>
+      <button class="tab" data-tab="files" role="tab">文件</button>
+      <button class="tab" data-tab="terminal" role="tab">终端</button>
+    </div>
+
+    <div class="drawer-body">
+      <div class="tab-pane active" data-pane="overview">
+        <div id="overviewInfo"></div>
+        <div class="quota-box">
+          <h3>资源配额调整</h3>
+          <div class="form-row inline cols-2">
+            <div class="field">
+              <label>内存上限</label>
+              <div class="field-input">
+                <input id="quotaMem" class="input" placeholder="如 256m / 512m" />
+                <button class="btn btn-ghost btn-sm" id="quotaMemConfirm" type="button">确认</button>
+              </div>
+              <div class="field-hint" id="quotaMemHint"></div>
+            </div>
+            <div class="field">
+              <label>CPU 配额（核）</label>
+              <div class="field-input">
+                <input id="quotaCpu" class="input" type="number" step="0.1" />
+                <button class="btn btn-ghost btn-sm" id="quotaCpuConfirm" type="button">确认</button>
+              </div>
+              <div class="field-hint" id="quotaCpuHint"></div>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="quotaSaveBtn" disabled>保存并生效</button>
+        </div>
+
+        <div class="quota-box cfg-box">
+          <h3>环境变量与启动命令</h3>
+          <div class="form-row">
+            <label>环境变量</label>
+            <textarea id="cfgEnv" class="input" rows="4" placeholder="APP_ENV=production&#10;LOG_LEVEL=info"></textarea>
+            <div class="field-hint">每行一条 <code>KEY=VALUE</code>，可留空</div>
+          </div>
+          <div class="form-row">
+            <label>启动命令</label>
+            <input id="cfgCmd" class="input mono" placeholder="留空则使用镜像默认，如 uvicorn app.main:app --host 0.0.0.0" />
+            <div class="field-hint">覆盖容器启动命令，可留空</div>
+          </div>
+          <button class="btn btn-primary" id="cfgSaveBtn">保存配置</button>
+        </div>
+
+        <div class="quota-box wh-box">
+          <h3>自动部署（Git Webhook）</h3>
+          <div class="field-hint" id="whSourceHint"></div>
+          <div class="form-row">
+            <label>Webhook 地址</label>
+            <div class="wh-copy-row">
+              <input id="whUrl" class="input mono" readonly />
+              <button class="btn btn-ghost btn-sm" id="whCopyUrl" type="button">复制</button>
+            </div>
+            <div class="field-hint">粘贴到 GitHub/Gitea 仓库的 Webhook 设置；本机开发环境收不到外网回调时，可用右侧「手动触发」走通同一条链路</div>
+          </div>
+          <div class="form-row">
+            <label>签名密钥</label>
+            <div class="wh-copy-row">
+              <input id="whSecret" class="input mono" readonly />
+              <button class="btn btn-ghost btn-sm" id="whCopySecret" type="button">复制</button>
+            </div>
+            <div class="field-hint">请求头 <code>X-Hub-Signature-256: sha256=&lt;HMAC-SHA256(密钥, 请求体)&gt;</code>；GitLab 可用 <code>X-Gitlab-Token</code> 直接填密钥</div>
+          </div>
+          <div class="wh-status">
+            <span class="wh-dot" id="whDot"></span>
+            <span class="muted" id="whState">尚未收到推送</span>
+          </div>
+          <div class="wh-actions">
+            <button class="btn btn-primary" id="whTriggerBtn" type="button">手动触发部署</button>
+            <button class="btn btn-ghost" id="whResetBtn" type="button">重置密钥</button>
+            <button class="btn btn-ghost" id="whRefreshBtn" type="button">刷新状态</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane" data-pane="diagnose">
+        <div class="diag-toolbar">
+          <span class="diag-level" id="diagLevel">未诊断</span>
+          <span class="muted diag-meta" id="diagMeta"></span>
+          <span class="diag-spacer"></span>
+          <button class="btn btn-ghost btn-sm" id="diagRun" type="button">重新诊断</button>
+        </div>
+        <div class="diag-hint" id="diagHint"></div>
+        <div class="diag-list" id="diagnoseList"></div>
+      </div>
+
+      <div class="tab-pane" data-pane="livelogs">
+        <div class="log-toolbar">
+          <span class="status-dot" id="wsDot"></span>
+          <span id="wsState" class="muted">未连接</span>
+          <span class="log-toolbar-spacer"></span>
+          <button class="btn btn-ghost btn-sm" id="wsToggle">连接</button>
+          <button class="btn btn-ghost btn-sm" id="wsClear">清空</button>
+        </div>
+        <pre class="log-view" id="liveLogs"></pre>
+      </div>
+
+      <div class="tab-pane" data-pane="buildlogs">
+        <pre class="log-view" id="buildLogs"></pre>
+      </div>
+
+      <div class="tab-pane" data-pane="metrics">
+        <div class="chart-legend">
+          <span><i class="dot cpu"></i>CPU %</span>
+          <span><i class="dot mem"></i>内存 %</span>
+          <span class="muted" id="metricsHint"></span>
+        </div>
+        <div class="chart-wrap">
+          <svg id="metricsChart" viewBox="0 0 640 240" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <div class="tab-pane" data-pane="files">
+        <div id="filesDrawerMount"></div>
+      </div>
+
+      <div class="tab-pane" data-pane="terminal">
+        <div class="sh-toolbar">
+          <span class="sh-dot" id="shDot"></span>
+          <span class="muted" id="shState">未连接</span>
+          <span class="sh-spacer"></span>
+          <button class="btn btn-ghost btn-sm" id="shInterrupt" type="button" title="向容器发送 Ctrl+C">中断</button>
+          <button class="btn btn-ghost btn-sm" id="shClear" type="button">清空</button>
+          <button class="btn btn-primary btn-sm" id="shToggle" type="button">连接</button>
+        </div>
+        <pre class="sh-screen" id="shScreen" tabindex="0"></pre>
+        <div class="sh-input-row">
+          <span class="sh-prompt">$</span>
+          <input id="shInput" class="input sh-input" placeholder="输入命令后回车执行（容器内 /bin/sh）" autocomplete="off" spellcheck="false" disabled />
+        </div>
+        <div class="sh-tip">终端直接操作运行中的容器（root 权限），仅用于排障；退出容器内的 shell 不会影响应用进程。</div>
+      </div>
+    </div>
+
+    <div class="drawer-foot" id="drawerActions"></div>
+  </aside>
+
+  <!-- Nginx 路由配置预览弹窗 -->
+  <div class="modal-mask hidden" id="nginxPreviewMask">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="nginxPreviewTitle">
+      <div class="modal-head">
+        <div>
+          <span class="eyebrow">NGINX SERVER BLOCK</span>
+          <h2 id="nginxPreviewTitle">路由反向代理配置预览</h2>
+        </div>
+        <button class="icon-btn" id="nginxPreviewClose" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="note" id="nginxPreviewMeta" style="margin-bottom:10px"></p>
+        <pre class="log-view log-sm" id="nginxPreviewCode" style="height:260px"></pre>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="nginxPreviewCopy" type="button">复制配置</button>
+        <button class="btn btn-primary" id="nginxPreviewOk" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建应用向导 -->
+  <div class="modal-mask hidden" id="wizardMask">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="wizardTitle">
+      <div class="modal-head">
+        <div>
+          <span class="eyebrow">向导</span>
+          <h2 id="wizardTitle">新建应用</h2>
+        </div>
+        <button class="icon-btn" id="wizardClose" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>应用名称 <span class="req">*</span></label>
+          <input id="wzName" class="input" placeholder="如 flask-demo（将作为子域名）" />
+        </div>
+
+        <div class="form-row">
+          <label>代码来源</label>
+          <div class="seg">
+            <button class="seg-item active" data-src="upload" type="button">上传 zip 代码包</button>
+            <button class="seg-item" data-src="git" type="button">Git 仓库地址</button>
+            <button class="seg-item" data-src="demo" type="button">使用内置示例</button>
+          </div>
+        </div>
+
+        <div id="wzUploadBox" class="form-row">
+          <label>代码包（.zip）</label>
+          <input id="wzFile" class="input" type="file" accept=".zip" />
+        </div>
+
+        <div id="wzGitBox" class="form-row hidden">
+          <label>Git 地址（http/https）</label>
+          <input id="wzGit" class="input" placeholder="https://github.com/user/repo.git" />
+        </div>
+
+        <div id="wzDemoBox" class="form-row hidden">
+          <label>内置示例代码包</label>
+          <select id="wzDemo" class="input"></select>
+        </div>
+
+        <div class="form-row inline">
+          <div class="field">
+            <label>容器端口</label>
+            <div class="field-input">
+              <input id="wzPort" class="input" type="number" value="8000" />
+              <button class="btn btn-ghost btn-sm" id="wzPortConfirm" type="button">确认</button>
+            </div>
+            <div class="field-hint" id="wzPortHint"></div>
+          </div>
+          <div class="field">
+            <label>内存上限</label>
+            <div class="field-input">
+              <input id="wzMem" class="input" value="256m" />
+              <button class="btn btn-ghost btn-sm" id="wzMemConfirm" type="button">确认</button>
+            </div>
+            <div class="field-hint" id="wzMemHint"></div>
+          </div>
+          <div class="field">
+            <label>CPU（核）</label>
+            <div class="field-input">
+              <input id="wzCpu" class="input" type="number" step="0.1" value="1.0" />
+              <button class="btn btn-ghost btn-sm" id="wzCpuConfirm" type="button">确认</button>
+            </div>
+            <div class="field-hint" id="wzCpuHint"></div>
+          </div>
+        </div>
+
+        <div class="quota-box cfg-box">
+          <h3>运行配置<span class="opt">可选</span></h3>
+          <div class="form-row">
+            <label>环境变量</label>
+            <textarea id="wzEnv" class="input" rows="4" placeholder="APP_ENV=production&#10;LOG_LEVEL=info"></textarea>
+            <div class="field-hint">每行一条 <code>KEY=VALUE</code>，可留空</div>
+          </div>
+          <div class="form-row">
+            <label>启动命令</label>
+            <input id="wzCmd" class="input mono" placeholder="留空则使用镜像默认，如 python app.py" />
+            <div class="field-hint">覆盖容器启动命令，可留空</div>
+          </div>
+        </div>
+
+        <div class="wizard-options">
+          <label class="check"><input type="checkbox" id="wzAutoDeploy" checked /> 创建后自动构建并部署</label>
+        </div>
+
+        <div id="wzProgress" class="progress-wrap hidden">
+          <div class="progress-steps" id="wzSteps"></div>
+          <pre class="log-view log-sm" id="wzLog"></pre>
+        </div>
+        <div id="wzError" class="alert hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="gate-hint" id="wizardGate">请先确认容器端口、内存上限与 CPU 核数</span>
+        <button class="btn btn-ghost" id="wizardCancel">取消</button>
+        <button class="btn btn-primary" id="wizardSubmit" disabled>创建并部署</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 重新部署：选择沿用当前配额或更改配额 -->
+  <div class="modal-mask hidden" id="redeployMask">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="redeployTitle">
+      <div class="modal-head">
+        <div>
+          <span class="eyebrow">操作</span>
+          <h2 id="redeployTitle">重新部署</h2>
+        </div>
+        <button class="icon-btn" id="redeployClose" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="note">重新部署将重新构建镜像、重建容器并重新分配宿主端口。</p>
+        <div class="radio-stack">
+          <label class="check">
+            <input type="radio" name="rdMode" value="keep" checked /> 沿用当前配额重建
+          </label>
+          <label class="check">
+            <input type="radio" name="rdMode" value="change" /> 更改配额后重建
+          </label>
+        </div>
+        <div id="rdQuotaBox" class="form-row inline cols-2 hidden">
+          <div class="field">
+            <label>内存上限</label>
+            <div class="field-input">
+              <input id="rdMem" class="input" placeholder="如 256m / 512m" />
+              <button class="btn btn-ghost btn-sm" id="rdMemConfirm" type="button">确认</button>
+            </div>
+            <div class="field-hint" id="rdMemHint"></div>
+          </div>
+          <div class="field">
+            <label>CPU 配额（核）</label>
+            <div class="field-input">
+              <input id="rdCpu" class="input" type="number" step="0.1" />
+              <button class="btn btn-ghost btn-sm" id="rdCpuConfirm" type="button">确认</button>
+            </div>
+            <div class="field-hint" id="rdCpuHint"></div>
+          </div>
+        </div>
+        <div id="rdError" class="alert hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="gate-hint" id="rdGate"></span>
+        <button class="btn btn-ghost" id="redeployCancel">取消</button>
+        <button class="btn btn-primary" id="redeployGo">确定重建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文本文件编辑器（项目文件管理） -->
+  <div class="modal-mask hidden" id="editorMask">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+      <div class="modal-head">
+        <div>
+          <span class="eyebrow">FILE EDITOR</span>
+          <h2 id="editorTitle">编辑文件</h2>
+        </div>
+        <button class="icon-btn" id="editorClose" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="editor-meta">
+          <span class="tag" id="editorPath"></span>
+          <span class="muted" id="editorHint"></span>
+        </div>
+        <textarea id="editorText" class="input editor-textarea" spellcheck="false"></textarea>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="editorCancel" type="button">取消</button>
+        <button class="btn btn-primary" id="editorSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 轻提示 -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

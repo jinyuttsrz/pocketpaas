@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#f8fafc" />
+  <title>登录 · PocketPaaS 容器云平台</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/login.css" />
+</head>
+<body>
+  <main class="auth-wrap">
+    <!-- 左侧品牌区（桌面端展示完整特性，移动端自动隐藏并转为顶部紧凑品牌栏） -->
+    <section class="brand-side">
+      <div class="brand">
+        <div class="logo">
+          <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+            <g fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 15.5 V6.5" />
+              <path d="M11.3 11.2 L16 6.5 L20.7 11.2" />
+              <path d="M7.5 16 L7.5 20 Q7.5 25 12.5 25 L19.5 25 Q24.5 25 24.5 20 L24.5 16" />
+            </g>
+          </svg>
+        </div>
+        <div>
+          <h1>PocketPaaS</h1>
+          <div class="sub">轻量级容器云平台 · 应用自动化交付</div>
+        </div>
+      </div>
+
+      <div class="brand-hero">
+        <h2>极简、可靠的容器化应用交付工作台</h2>
+        <p>从源码上传到容器运行、从配额隔离到动态域名路由，一站式完成云原生应用全生命周期管理。</p>
+        <ul class="features">
+          <li>
+            <span class="ic">✓</span>
+            <div>
+              <strong>源码一键构建部署</strong>
+              <span>自动识别 Python / Node.js / 静态站点并生成 Dockerfile</span>
+            </div>
+          </li>
+          <li>
+            <span class="ic">✓</span>
+            <div>
+              <strong>CGroups 资源硬隔离</strong>
+              <span>支持 CPU 核数与内存上限实时校验及在线热调整</span>
+            </div>
+          </li>
+          <li>
+            <span class="ic">✓</span>
+            <div>
+              <strong>Nginx 动态路由与实时观测</strong>
+              <span>自动渲染反向代理配置，WebSocket 推送容器日志流</span>
+            </div>
+          </li>
+          <li>
+            <span class="ic">✓</span>
+            <div>
+              <strong>内网隔离与运行时加固</strong>
+              <span>专用隔离网桥、最小权限原则与后台异常自愈巡检</span>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <div class="brand-foot" id="brandFoot">容器云平台 · v0.1.0</div>
+    </section>
+
+    <!-- 右侧表单区（桌面端居中卡片，移动端自适应主屏） -->
+    <section class="form-side">
+      <div class="form-container">
+        <!-- 移动端专属顶部品牌栏（桌面端隐藏） -->
+        <header class="mobile-brand">
+          <div class="logo">
+            <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 15.5 V6.5" />
+                <path d="M11.3 11.2 L16 6.5 L20.7 11.2" />
+                <path d="M7.5 16 L7.5 20 Q7.5 25 12.5 25 L19.5 25 Q24.5 25 24.5 20 L24.5 16" />
+              </g>
+            </svg>
+          </div>
+          <div class="mobile-brand-text">
+            <strong>PocketPaaS</strong>
+            <span>轻量级容器云平台</span>
+          </div>
+        </header>
+
+        <div class="card">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-mode="login" id="tabLogin" type="button" role="tab">登录</button>
+            <button class="tab" data-mode="register" id="tabRegister" type="button" role="tab">注册</button>
+          </div>
+
+          <div class="form-header">
+            <h2 id="formTitle">欢迎回来</h2>
+            <p class="hint" id="formHint">请登录以进入控制台</p>
+          </div>
+
+          <form id="authForm" autocomplete="on" novalidate>
+            <div class="field">
+              <label for="username">用户名</label>
+              <div class="input-wrap">
+                <span class="prefix">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="8" r="3.5" />
+                    <path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" />
+                  </svg>
+                </span>
+                <input id="username" name="username" class="input" type="text"
+                       placeholder="请输入用户名" autocomplete="username" required />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="password">密码</label>
+              <div class="input-wrap">
+                <span class="prefix">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="5" y="11" width="14" height="9" rx="2" />
+                    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+                  </svg>
+                </span>
+                <input id="password" name="password" class="input has-eye" type="password"
+                       placeholder="请输入密码" autocomplete="current-password" required />
+                <button type="button" class="eye" id="togglePwd" title="显示 / 隐藏密码" aria-label="显示或隐藏密码">
+                  <svg class="ic-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
+                    <circle cx="12" cy="12" r="2.6" />
+                  </svg>
+                  <svg class="ic-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 3l18 18" />
+                    <path d="M10.6 6.2A9.8 9.8 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.3 3.9" />
+                    <path d="M6.3 7.4A16.6 16.6 0 0 0 2 12s3.6 6 10 6a9.9 9.9 0 0 0 3.9-.8" />
+                    <path d="M9.9 9.9a2.6 2.6 0 0 0 3.6 3.6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="field hidden" id="displayNameField">
+              <label for="displayName">显示名 <span class="label-note">（可选）</span></label>
+              <div class="input-wrap">
+                <span class="prefix">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 20h4L20 8l-4-4L4 16v4Z" />
+                    <path d="M14 6l4 4" />
+                  </svg>
+                </span>
+                <input id="displayName" name="displayName" class="input" type="text"
+                       placeholder="用于控制台展示，默认与用户名相同" />
+              </div>
+            </div>
+
+            <div class="field" id="captchaField">
+              <label for="captcha">
+                验证码
+                <span class="label-note">（不区分大小写）</span>
+              </label>
+              <div class="captcha-row">
+                <div class="input-wrap captcha-input">
+                  <span class="prefix">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M12 3l8 4v5c0 4.4-3.2 8.3-8 9-4.8-.7-8-4.6-8-9V7l8-4Z" />
+                      <path d="M9.2 12.2l2 2 3.6-4" />
+                    </svg>
+                  </span>
+                  <input id="captcha" name="captcha" class="input" type="text"
+                         placeholder="输入图片字符" autocomplete="off"
+                         autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="8" required />
+                </div>
+                <button type="button" class="captcha-img" id="captchaImg" title="点击刷新验证码" aria-label="点击刷新验证码">
+                  <span class="captcha-loading" id="captchaHint">点击获取</span>
+                  <img id="captchaPic" alt="验证码" hidden />
+                </button>
+              </div>
+            </div>
+
+            <div class="password-strength hidden" id="pwdStrength">
+              <div class="bars"><i></i><i></i><i></i><i></i></div>
+              <span class="label" id="pwdStrengthLabel">密码强度</span>
+            </div>
+
+            <div class="row-between">
+              <label class="remember">
+                <input type="checkbox" id="remember" checked /> 记住我
+              </label>
+              <button type="button" class="link" id="forgotBtn">忘记密码？</button>
+            </div>
+
+            <div class="alert hidden" id="alertBox"></div>
+
+            <button type="submit" class="btn btn-primary" id="submitBtn">
+              <span class="spinner hidden" id="spinner"></span>
+              <span id="submitText">登 录</span>
+            </button>
+          </form>
+
+          <div class="switch-tip" id="switchTip">
+            还没有账号？<button type="button" class="link" id="switchBtn">立即注册</button>
+          </div>
+
+          <div class="default-tip hidden" id="defaultTip">
+            已启用默认管理员：<code>admin / admin12345</code>，登录后请及时修改密码。
+          </div>
+        </div>
+
+        <!-- 移动端底部精简说明（桌面端隐藏） -->
+        <footer class="mobile-foot">
+          <div class="mobile-pills">
+            <span>源码构建</span>
+            <span>·</span>
+            <span>资源隔离</span>
+            <span>·</span>
+            <span>动态路由</span>
+          </div>
+          <div class="mobile-version">PocketPaaS · 容器云平台</div>
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/login.js"></script>
+</body>
+</html>

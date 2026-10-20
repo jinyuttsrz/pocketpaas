@@ -1,0 +1,51 @@
+# PocketPaaS 平台编排文件
+#
+# 关键设计：network_mode: host
+#   平台通过 docker.sock 在宿主机上创建应用容器，并把端口发布到宿主机；
+#   动态路由（route_service）反代的目标是 127.0.0.1:{应用端口}。
+#   只有让平台容器使用 host 网络，容器内的 127.0.0.1 才等于宿主机，
+#   nginx 才能反代到宿主机端口上运行的应用容器。
+#
+# 因此：平台容器不映射端口（host 网络下 ports 无效），直接监听宿主 8000。
+
+# 显式指定项目名：目录名含中文时，Compose 无法自动推导出合法项目名
+name: pocketpaas
+
+services:
+  pocketpaas:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: pocketpaas:latest
+    container_name: pocketpaas
+    restart: unless-stopped
+    network_mode: host
+
+    # 使用宿主机 Docker：平台需要创建 / 构建 / 管理应用容器
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 持久化：数据库 + 构建工作区（WORKSPACE_DIR=/data/workspace 在其内）
+      - ./paas-data/data:/data
+      # 持久化：平台生成的动态路由配置（应用子域名，paas-{id}.conf）
+      - ./paas-data/nginx:/etc/nginx/conf.d
+      # 控制台（面板）域名路由：手工配置，只读挂载
+      - ./deploy/console.conf:/etc/nginx/conf.d/console.conf:ro
+      # 内置示例代码包（「模板与指南」页一键创建演示应用的数据来源）。
+      # 镜像里只 COPY 了 app，不含 demo；不挂载的话容器内 /demo 不存在，
+      # 控制台的示例包下拉会显示「（未找到示例包）」。
+      - ./demo:/demo:ro
+
+    # 线上配置从 backend/.env.prod 注入（复制 .env.prod.example 后修改）
+    env_file:
+      - ./backend/.env.prod
+
+    # 平台自身需要以 root 运行才能执行 nginx -s reload 并写 conf.d
+    # （应用容器另有 cap_drop=ALL 加固，互不影响）
+    user: root
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
