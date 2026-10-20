@@ -380,7 +380,11 @@ docker compose up -d --build
 
 ## 许可证
 
-本仓库**暂未添加 `LICENSE` 文件**。如需开源，请自行补充合适的许可证。
+本项目采用 **GNU General Public License v3.0（GPL-3.0）**，全文见 [LICENSE](LICENSE)。
+
+> **GPL-3.0 是强著佐权（copyleft）许可**：你可以自由使用、修改、分发，但**分发衍生作品时必须以同样的 GPL-3.0 许可开源并提供完整源码**，同时保留版权与许可声明。它**不含「网络服务即触发开源」条款**（那是 AGPL-3.0 的范畴），因此把本项目作为线上服务运行，并不会被要求公开源码。作者不承担担保责任。
+>
+> 本项目依赖（FastAPI、SQLAlchemy、docker-py、uvicorn、psutil 等）均为宽松许可，可被 GPL-3.0 作品包含，不存在许可冲突。
 
 ## 致谢 / 说明
 
