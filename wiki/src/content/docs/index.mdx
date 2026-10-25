@@ -1,0 +1,74 @@
+---
+title: PocketPaaS 文档
+description: 轻量级容器云平台 PocketPaaS 的部署、使用与接口文档
+template: splash
+hero:
+  tagline: 在单机 Docker 之上，把「源码 → 镜像 → 容器 → 域名」的交付链路自动化。
+  actions:
+    - text: 快速开始
+      link: /project/pocketpaas/start/quickstart/
+      icon: rocket
+    - text: 查看架构
+      link: /project/pocketpaas/reference/architecture/
+      icon: information
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="5 分钟跑起来" icon="rocket">
+    本地用 WSL2 + Docker Desktop 启动控制面，或直接用 Docker Compose 跑一份接近线上的实例。
+    [进入快速开始 →](/start/quickstart/)
+  </Card>
+  <Card title="部署到服务器" icon="server">
+    双层 Nginx + 泛域名路由的完整上线步骤，含端口规划、DNS 与分层验收清单。
+    [查看部署手册 →](/deploy/server/)
+  </Card>
+  <Card title="用起来" icon="setting">
+    应用创建、源码接入、配额调整、文件管理、容器终端、日志、诊断与告警。
+    [查看使用指南 →](/guide/apps/)
+  </Card>
+  <Card title="查资料" icon="document">
+    配置项清单、API 概览、系统架构说明与常见问题排查。
+    [查看参考手册 →](/reference/config/)
+  </Card>
+</CardGrid>
+
+<div className="not-prose my-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+  <div className="rounded-xl border border-black/10 bg-black/[0.03] p-4 dark:border-white/15 dark:bg-white/[0.04]">
+    <div className="text-2xl font-semibold tracking-tight">21</div>
+    <div className="mt-1 text-sm opacity-70">类审计动作</div>
+  </div>
+  <div className="rounded-xl border border-black/10 bg-black/[0.03] p-4 dark:border-white/15 dark:bg-white/[0.04]">
+    <div className="text-2xl font-semibold tracking-tight">8</div>
+    <div className="mt-1 text-sm opacity-70">项一键诊断</div>
+  </div>
+  <div className="rounded-xl border border-black/10 bg-black/[0.03] p-4 dark:border-white/15 dark:bg-white/[0.04]">
+    <div className="text-2xl font-semibold tracking-tight">9</div>
+    <div className="mt-1 text-sm opacity-70">张数据表</div>
+  </div>
+  <div className="rounded-xl border border-black/10 bg-black/[0.03] p-4 dark:border-white/15 dark:bg-white/[0.04]">
+    <div className="text-2xl font-semibold tracking-tight">4</div>
+    <div className="mt-1 text-sm opacity-70">个内置示例包</div>
+  </div>
+</div>
+
+## 这个平台是什么
+
+PocketPaaS 是一套构建在**单机 Docker 引擎**之上的「控制面—数据面」分离的类 PaaS 平台：
+用户提供源码（zip 包、Git 仓库或内置示例包），平台自动识别项目类型、生成 Dockerfile、
+构建镜像、启动容器，并为其动态渲染 Nginx 反向代理路由。
+
+它面向中小团队、教学环境与个人开发者，作为 Kubernetes「能力过剩」场景下的轻量替代方案。
+
+## 文档怎么读
+
+| 你的目的 | 从这里开始 |
+|---|---|
+| 第一次接触项目，想了解它解决什么问题 | [项目简介](/start/overview/) |
+| 只想在本机把控制台跑起来 | [本机运行](/start/local/) |
+| 要部署到云服务器并对外提供域名访问 | [服务器部署](/deploy/server/) |
+| 已经部署好，想学会用平台交付应用 | [应用交付全流程](/guide/apps/) |
+| 要对接接口或写自动化脚本 | [API 概览](/reference/api/) |
+| 遇到报错需要排查 | [常见问题](/about/faq/) |

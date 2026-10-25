@@ -1,0 +1,43 @@
+/*
+ * Tailwind 只引入主题变量与工具类，跳过 preflight，
+ * 避免与 Starlight 自带的基础样式互相覆盖。
+ */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@source '../**/*.{astro,md,mdx,html}';
+
+/* 中文字体栈：不依赖任何外部 CDN，离线与内网环境同样可用 */
+:root {
+  --sl-font: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC',
+    'Noto Sans CJK SC', sans-serif;
+  --sl-font-mono: 'Cascadia Code', 'JetBrains Mono', Consolas, 'Courier New', monospace;
+}
+
+/* 首页卡片 */
+.ppaas-card {
+  display: block;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.ppaas-card:hover {
+  border-color: var(--sl-color-accent);
+  transform: translateY(-2px);
+}
+
+.ppaas-card h3 {
+  margin: 0 0 0.35rem;
+  font-size: var(--sl-text-lg);
+  color: var(--sl-color-white);
+}
+
+.ppaas-card p {
+  margin: 0;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+  line-height: 1.6;
+}
