@@ -521,6 +521,24 @@ def build_image(
     return BuildResult(True, image_tag, None, len(collected))
 
 
+def pull_image(image: str) -> None:
+    """确保镜像可用：本地已有则跳过，否则从仓库拉取。
+
+    用于 compose 只声明 image（无 build）的场景；避免离线环境下对已有镜像
+    发起不必要的远端请求。
+    """
+    try:
+        with client(timeout=settings.BUILD_TIMEOUT) as cli:
+            try:
+                cli.images.get(image)
+                return
+            except ImageNotFound:
+                pass
+            cli.images.pull(image)
+    except DockerException as exc:
+        raise DockerUnavailableError(f"镜像拉取失败：{image}（{exc}）") from exc
+
+
 def remove_image(image_tag: str, force: bool = True) -> None:
     """删除构建产物镜像（构建失败清理 / 应用销毁时使用）。"""
     try:

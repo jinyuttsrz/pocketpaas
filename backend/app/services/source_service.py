@@ -69,15 +69,17 @@ def _safe_extract_zip(zip_path: Path, dest: Path) -> None:
     try:
         with zipfile.ZipFile(zip_path) as zf:
             for info in zf.infolist():
+                # Windows 压缩工具可能用反斜杠作为路径分隔符，统一规范化为 /
+                name = info.filename.replace("\\", "/")
                 # 跳过目录项
-                if info.is_dir():
+                if name.endswith("/"):
                     continue
                 # 拒绝符号链接（外部属性高位标识）
                 mode = info.external_attr >> 16
                 if stat.S_ISLNK(mode):
                     raise SourceError(f"代码包包含符号链接，已拒绝：{info.filename}")
                 # 路径穿越校验
-                target = dest / info.filename
+                target = dest / name
                 if not _is_within(dest, target):
                     raise SourceError(f"检测到非法路径（路径穿越）：{info.filename}")
 

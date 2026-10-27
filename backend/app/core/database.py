@@ -45,6 +45,18 @@ _COLUMN_PATCHES: tuple[tuple[str, str, str], ...] = (
     ("apps", "env", "ALTER TABLE apps ADD COLUMN env TEXT"),
     ("apps", "command", "ALTER TABLE apps ADD COLUMN command VARCHAR(512)"),
     ("apps", "webhook_secret", "ALTER TABLE apps ADD COLUMN webhook_secret VARCHAR(64)"),
+    ("apps", "active_slot", "ALTER TABLE apps ADD COLUMN active_slot VARCHAR(8)"),
+    ("apps", "previous_slot", "ALTER TABLE apps ADD COLUMN previous_slot VARCHAR(8)"),
+    ("app_services", "previous_container_id", "ALTER TABLE app_services ADD COLUMN previous_container_id VARCHAR(64)"),
+    ("app_services", "previous_container_name", "ALTER TABLE app_services ADD COLUMN previous_container_name VARCHAR(128)"),
+    ("app_services", "previous_host_port", "ALTER TABLE app_services ADD COLUMN previous_host_port INTEGER"),
+    ("app_services", "previous_container_port", "ALTER TABLE app_services ADD COLUMN previous_container_port INTEGER"),
+    ("app_services", "previous_image", "ALTER TABLE app_services ADD COLUMN previous_image VARCHAR(255)"),
+    ("app_services", "previous_status", "ALTER TABLE app_services ADD COLUMN previous_status VARCHAR(16)"),
+    ("deployments", "slot", "ALTER TABLE deployments ADD COLUMN slot VARCHAR(8)"),
+    ("deployments", "strategy", "ALTER TABLE deployments ADD COLUMN strategy VARCHAR(16)"),
+    ("routes", "service_name", "ALTER TABLE routes ADD COLUMN service_name VARCHAR(64)"),
+    ("metrics", "service_id", "ALTER TABLE metrics ADD COLUMN service_id INTEGER"),
 )
 
 

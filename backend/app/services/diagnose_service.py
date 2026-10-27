@@ -140,6 +140,63 @@ def _check_container(app: App, checks: list[Check]) -> bool:
     return False
 
 
+def _check_services(app: App, checks: list[Check]) -> bool:
+    """④ 容器检查：多服务 compose 逐服务分组，单容器应用沿用整体检查。
+
+    返回公开服务是否运行，供后续端口探测决定是否跳过。
+    """
+    services = list(app.services)
+    if len(services) <= 1:
+        return _check_container(app, checks)
+
+    public_running = False
+    for service in services:
+        key = f"container:{service.name}"
+        label = f"服务 {service.name}" + ("（公开）" if service.is_public else "（内部）")
+        try:
+            _svc, ref = app_service.resolve_service_container(app, service.name)
+        except app_service.AppError:
+            ref = service.container_name or ""
+
+        if service.image and not docker_service.image_exists(service.image):
+            _add(checks, key, label, FAIL, f"镜像不存在：{service.image}", "重新构建并部署")
+            continue
+        if not ref:
+            _add(checks, key, label, FAIL, "服务尚未分配容器", "重新部署应用以创建容器")
+            continue
+
+        try:
+            state = docker_service.inspect_state(ref)
+        except docker_service.ContainerNotFoundError:
+            _add(checks, key, label, FAIL, "容器不存在", "重新部署应用以重建全部服务")
+            continue
+        except docker_service.DockerUnavailableError as exc:
+            _add(checks, key, label, FAIL, f"Docker 不可用：{exc}", "确认 Docker Daemon 正在运行")
+            continue
+
+        if state["running"]:
+            extra = f"，重启次数 {state['restart_count']}" if state["restart_count"] else ""
+            _add(checks, key, label, OK, f"运行中（{ref}）{extra}")
+            if service.is_public:
+                public_running = True
+            continue
+
+        # 未运行：给出可解释的原因，并附最近日志尾部
+        code = state["exit_code"]
+        oom = "（疑似内存超限被 OOM 终止）" if state["oom_killed"] else ""
+        detail = f"未运行：state={state['state']}，退出码 {code}{oom}"
+        if state["error"]:
+            detail += f"，错误信息：{state['error']}"
+        try:
+            tail = docker_service.tail_logs(ref, tail=10)
+            if tail:
+                detail += "；最近日志：" + " | ".join(tail[-5:])
+        except Exception:
+            pass
+        _add(checks, key, label, FAIL, detail, "查看该服务日志后重启，或调整启动命令")
+    return public_running
+
+
 def _check_host_port(app: App, checks: list[Check], running: bool) -> None:
     """⑤ 宿主端口连通性（容器未运行时无法判断，跳过）。"""
     if not running:
@@ -271,7 +328,7 @@ def diagnose_app(db: Session, app_id: int, user=None) -> dict:
 
     running = False
     try:
-        running = _check_container(app, checks)
+        running = _check_services(app, checks)
     except Exception as exc:
         _add(checks, "container", "容器", FAIL, f"检查异常：{type(exc).__name__}: {exc}")
 

@@ -15,12 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.models import App, Metric
+from app.models.models import App, AppService, Metric
 from app.services import docker_service
 
 
-def sample_app(app_id: int, container_ref: str) -> Metric | None:
-    """对单个容器做一次采样并落库；容器不在运行则返回 None。"""
+def sample_app(app_id: int, container_ref: str, service_id: int | None = None) -> Metric | None:
+    """对单个服务容器做一次采样并落库；容器不在运行则返回 None。"""
     try:
         info = docker_service.get(container_ref)
         if info.status != "running":
@@ -29,7 +29,9 @@ def sample_app(app_id: int, container_ref: str) -> Metric | None:
     except (docker_service.ContainerNotFoundError, docker_service.DockerUnavailableError):
         return None
 
-    metric = Metric(app_id=app_id, cpu=s["cpu_percent"], mem=s["mem_percent"])
+    metric = Metric(
+        app_id=app_id, service_id=service_id, cpu=s["cpu_percent"], mem=s["mem_percent"]
+    )
     db = SessionLocal()
     try:
         db.add(metric)
@@ -58,25 +60,25 @@ def _prune(db: Session, app_id: int, keep: int | None = None) -> None:
 
 
 def _collect_loop() -> None:
-    """采样主循环：每轮遍历所有 running 状态应用。"""
+    """采样主循环：每轮遍历所有 running 应用下的服务容器。"""
     while True:
         db = SessionLocal()
         try:
-            running = db.execute(
-                select(App).where(App.status == "running")
+            rows = db.execute(
+                select(AppService)
+                .join(App, App.id == AppService.app_id)
+                .where(App.status == "running", AppService.container_name.isnot(None))
+                .order_by(AppService.app_id, AppService.name)
             ).scalars().all()
-            targets = [
-                (app.id, docker_service.container_name_for(app.id, app.name))
-                for app in running
-            ]
+            targets = [(row.app_id, row.container_name, row.id) for row in rows]
         except Exception:
             targets = []
         finally:
             db.close()
 
-        for app_id, ref in targets:
+        for app_id, ref, service_id in targets:
             try:
-                sample_app(app_id, ref)
+                sample_app(app_id, ref, service_id)
             except Exception:
                 # 单容器采样失败不阻塞整体采集
                 continue
@@ -90,12 +92,32 @@ def start_collector() -> threading.Thread:
     return thread
 
 
-def list_metrics(db: Session, app_id: int, limit: int = 120) -> list[Metric]:
-    """查询应用最近 limit 条采样，按时间升序返回（折线图直接可用）。"""
+def _service_filter(db: Session, app_id: int, service: str | None):
+    """构造采样过滤条件：默认取公开服务，未指定且无服务记录时兼容历史数据。"""
+    services = db.execute(
+        select(AppService)
+        .where(AppService.app_id == app_id)
+        .order_by(AppService.is_public.desc(), AppService.id)
+    ).scalars().all()
+    if not services:
+        return Metric.service_id.is_(None)
+    target = None
+    if service:
+        target = next((item for item in services if item.name == service), None)
+    else:
+        target = services[0]
+    if target is None:
+        raise ValueError(f"服务不存在：{service}")
+    return Metric.service_id == target.id
+
+
+def list_metrics(
+    db: Session, app_id: int, service: str | None = None, limit: int = 120
+) -> list[Metric]:
+    """查询应用（或指定服务）最近 limit 条采样，按时间升序返回。"""
+    stmt = select(Metric).where(Metric.app_id == app_id)
+    stmt = stmt.where(_service_filter(db, app_id, service))
     rows = db.execute(
-        select(Metric)
-        .where(Metric.app_id == app_id)
-        .order_by(Metric.id.desc())
-        .limit(min(limit, settings.METRICS_KEEP))
+        stmt.order_by(Metric.id.desc()).limit(min(limit, settings.METRICS_KEEP))
     ).scalars().all()
     return list(reversed(rows))

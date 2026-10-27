@@ -133,7 +133,7 @@ docker exec pocketpaas ls /demo
 
 登录控制台后做一次自检：
 
-1. 「模板与指南」页示例包下拉能看到 4 个示例包：`static-demo`、`python-demo`、`node-demo`、`custom-demo`；
+1. 「模板与指南」页示例包下拉能看到 5 个示例包：`static-demo`、`python-demo`、`node-demo`、`custom-demo`、`compose-demo`；
 2. 任选一个一键创建应用，随后按入口逐项验证：
 
 | 入口 | 可验证的能力 |

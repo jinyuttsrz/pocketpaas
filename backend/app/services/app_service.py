@@ -6,19 +6,22 @@ M3 会在此基础上补齐"上传代码 → 构建镜像"的前置环节。
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
+from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
-from app.models.models import App, BuildLog, Deployment, Route, User
+from app.models.models import App, AppService, BuildLog, Deployment, Metric, Route, User
 from app.schemas.app_schema import AppCreate, DeployIn
 from app.services import (
     builder_service,
+    compose_engine,
     docker_service,
     port_allocator,
     resource_service,
@@ -49,12 +52,140 @@ def _is_admin(user: User | None) -> bool:
     return user is not None and user.role == "admin"
 
 
+DEFAULT_SERVICE_NAME = "default"
+
+
+def default_container_name(app: App) -> str:
+    """单容器应用沿用的容器名（与历史数据、指标 / 巡检保持一致）。"""
+    return docker_service.container_name_for(app.id, app.name)
+
+
+def ensure_default_service(db: Session, app: App, *, commit: bool = True) -> AppService:
+    """确保单容器应用存在 name="default" 的服务记录。"""
+    service = db.execute(
+        select(AppService).where(
+            AppService.app_id == app.id, AppService.name == DEFAULT_SERVICE_NAME
+        )
+    ).scalar_one_or_none()
+    if service is not None:
+        return service
+
+    service = AppService(
+        app_id=app.id,
+        name=DEFAULT_SERVICE_NAME,
+        image=app.image,
+        container_name=default_container_name(app),
+        container_port=app.container_port,
+        host_port=app.host_port,
+        mem_limit=app.mem_limit,
+        cpu_quota=app.cpu_quota,
+        status=app.status,
+        is_public=True,
+    )
+    db.add(service)
+    if commit:
+        db.commit()
+        db.refresh(service)
+    else:
+        db.flush()
+    return service
+
+
+def backfill_app_services(db: Session) -> int:
+    """启动时为缺少服务记录的历史应用补一条 default 服务。"""
+    apps = db.execute(select(App)).scalars().all()
+    created = 0
+    for app in apps:
+        exists = db.execute(
+            select(AppService.id).where(AppService.app_id == app.id).limit(1)
+        ).scalar_one_or_none()
+        if exists is not None:
+            continue
+        db.add(
+            AppService(
+                app_id=app.id,
+                name=DEFAULT_SERVICE_NAME,
+                image=app.image,
+                container_name=default_container_name(app),
+                container_port=app.container_port,
+                host_port=app.host_port,
+                mem_limit=app.mem_limit,
+                cpu_quota=app.cpu_quota,
+                status=app.status,
+                is_public=True,
+            )
+        )
+        created += 1
+    if created:
+        db.commit()
+    return created
+
+
+def sync_default_service(db: Session, app: App, **fields) -> AppService:
+    """把单容器应用的运行信息同步到默认服务记录（不额外提交事务）。"""
+    service = ensure_default_service(db, app, commit=False)
+    for key, value in fields.items():
+        if hasattr(service, key):
+            setattr(service, key, value)
+    return service
+
+
+def resolve_service_container(
+    app: App, service_name: str | None = None
+) -> tuple[AppService | None, str]:
+    """解析服务记录与其容器名。
+
+    未指定服务时取公开服务（单容器应用即 default）；没有服务记录的历史应用
+    回退到旧容器名，保证兼容。
+    """
+    services = list(app.services)
+    if not services:
+        return None, default_container_name(app)
+
+    if service_name:
+        target = next((item for item in services if item.name == service_name), None)
+        if target is None:
+            raise AppError(f"服务不存在：{service_name}")
+    else:
+        target = next((item for item in services if item.is_public), None) or services[0]
+
+    if target.name == DEFAULT_SERVICE_NAME or target.is_public:
+        ref = target.container_name or default_container_name(app)
+    else:
+        ref = target.container_name or docker_service.container_name_for(
+            app.id, f"{app.name}-{target.name}"
+        )
+    return target, ref
+
+
+def restart_service(
+    db: Session, app_id: int, service_name: str, user: User | None = None
+) -> App:
+    """重启应用内的单个服务容器（多容器 compose 的排障入口）。"""
+    app = get_app(db, app_id, user)
+    service, ref = resolve_service_container(app, service_name)
+    if service is None:
+        raise AppError("应用尚无服务记录，请先部署")
+    try:
+        docker_service.restart(ref)
+    except docker_service.ContainerNotFoundError:
+        raise AppError(f"服务 {service.name} 的容器不存在，请重新部署") from None
+    service.status = "running"
+    if service.is_public:
+        app.status = "running"
+    db.commit()
+    db.refresh(app)
+    return app
+
+
 def list_apps(db: Session, user: User | None = None) -> list[App]:
     """应用列表：普通用户仅见自己的应用，管理员见全部。
 
     user 为 None 表示未开启鉴权（单租户），此时返回全部。
     """
-    stmt = select(App).options(selectinload(App.owner)).order_by(App.id)
+    stmt = select(App).options(
+        selectinload(App.owner), selectinload(App.services)
+    ).order_by(App.id)
     if user is not None and not _is_admin(user):
         stmt = stmt.where(App.owner_id == user.id)
     return list(db.execute(stmt).scalars().all())
@@ -65,7 +196,9 @@ def get_app(db: Session, app_id: int, user: User | None = None) -> App:
 
     非属主（且非管理员）访问时同样抛「应用不存在」，避免泄露他人应用的存在性。
     """
-    stmt = select(App).options(selectinload(App.owner)).where(App.id == app_id)
+    stmt = select(App).options(
+        selectinload(App.owner), selectinload(App.services)
+    ).where(App.id == app_id)
     if user is not None and not _is_admin(user):
         stmt = stmt.where(App.owner_id == user.id)
     app = db.execute(stmt).scalar_one_or_none()
@@ -115,6 +248,7 @@ def create_app(db: Session, payload: AppCreate, owner: User | None = None) -> Ap
         db.rollback()
         raise AppError(f"应用创建失败（唯一约束冲突）：{payload.name}") from exc
     db.refresh(app)
+    ensure_default_service(db, app)
     return app
 
 
@@ -147,6 +281,30 @@ def deploy_app(
     M3 接入镜像构建后，此处会先构建再启动。
     """
     app = get_app(db, app_id, user)
+
+    # 多服务 compose：重新解析源码，走独立编排链路
+    if app.project_type == "compose" and app.source_path:
+        from pathlib import Path
+
+        src = Path(app.source_path)
+        if src.exists():
+            try:
+                profile = builder_service.detect(src)
+            except (ValueError, FileNotFoundError) as exc:
+                raise AppError(str(exc)) from exc
+            if profile.compose is not None and profile.compose.is_multi:
+                return _deploy_compose_multi(db, app, profile.compose, payload)
+
+    if _is_multi_app(app) and (
+        not app.source_path or not Path(app.source_path).exists()
+    ):
+        raise AppError("多服务应用的源码目录缺失，请重新上传或拉取源码后再部署")
+
+    # 从多服务切回单容器：清理旧的 compose 项目，避免残留容器
+    if _is_multi_app(app):
+        compose_engine.remove_plan(app, app.services, remove_volumes=False)
+        _prune_services(db, app, {DEFAULT_SERVICE_NAME})
+        db.commit()
 
     # 重新部署（reassign_port=True）时允许对运行中的应用直接重建：
     # 旧容器会在下方被强制移除，宿主端口也将重新分配。
@@ -215,6 +373,19 @@ def deploy_app(
     app.image = image
     app.host_port = host_port
     app.status = "running"
+    sync_default_service(
+        db,
+        app,
+        image=image,
+        container_id=info.id,
+        container_name=info.name,
+        container_port=app.container_port,
+        host_port=host_port,
+        mem_limit=app.mem_limit,
+        cpu_quota=app.cpu_quota,
+        status="running",
+        is_public=True,
+    )
 
     deployment = Deployment(
         app_id=app.id,
@@ -240,47 +411,789 @@ def deploy_app(
     return app
 
 
-def sync_route(db: Session, app: App) -> Route | None:
-    """部署后同步路由：ENABLE_NGINX 关闭时不做任何事（本地端口直连模式）。
-
-    重建部署导致 host_port 变化时，conf 会被覆盖更新，路由始终指向最新 upstream。
-    """
-    if not settings.ENABLE_NGINX or not app.host_port:
+def _public_primary(app: App) -> AppService | None:
+    """主入口服务：宿主端口与应用 host_port 一致的那个公开服务。"""
+    publics = [service for service in app.services if service.is_public]
+    if not publics:
         return None
-    domain = route_service.domain_for(app.subdomain)
+    return next(
+        (service for service in publics if app.host_port and service.host_port == app.host_port),
+        publics[0],
+    )
+
+
+def _service_domain(app: App, service: AppService, primary: AppService | None) -> str:
+    if service is primary:
+        return route_service.domain_for(app.subdomain)
+    return route_service.domain_for_service(app.subdomain, service.name)
+
+
+def sync_routes(db: Session, app: App) -> list[Route]:
+    """部署后同步全部公开服务路由：一个 conf 内渲染多个域名。"""
+    if not settings.ENABLE_NGINX:
+        return []
+    primary = _public_primary(app)
+    if primary is None:
+        return []
+    publics = sorted(
+        [service for service in app.services if service.is_public and service.host_port],
+        key=lambda service: 0 if service is primary else 1,
+    )
+    if not publics:
+        return []
+
+    entries = [
+        (service, _service_domain(app, service, primary), int(service.host_port))
+        for service in publics
+    ]
+    domains = [domain for _service, domain, _port in entries]
+    if len(set(domains)) != len(domains):
+        raise AppError(f"公开服务域名冲突：{', '.join(domains)}")
+
+    other_subdomains = set(
+        db.execute(select(App.subdomain).where(App.id != app.id)).scalars()
+    )
+    other_domains = set(
+        db.execute(select(Route.domain).where(Route.app_id != app.id)).scalars()
+    )
+    for domain in domains:
+        if domain.split(".")[0] in other_subdomains or domain in other_domains:
+            raise AppError(f"域名冲突：{domain} 已被其他应用占用")
+
     try:
-        ssl = route_service.apply_route(
-            app_id=app.id, domain=domain, upstream_port=app.host_port
+        ssl = route_service.apply_routes(
+            app_id=app.id, routes=[(domain, port) for _s, domain, port in entries]
         )
     except route_service.RouteError as exc:
         raise AppError(f"路由配置失败：{exc}") from exc
     except OSError as exc:
-        # 写 conf 无权限 / 磁盘等系统级错误：归一为业务异常，交由上层降级处理
         raise AppError(f"路由配置写入失败：{exc}") from exc
 
-    route = db.execute(select(Route).where(Route.app_id == app.id)).scalar_one_or_none()
-    if route is None:
-        route = Route(app_id=app.id, domain=domain, upstream_port=app.host_port)
+    db.execute(delete(Route).where(Route.app_id == app.id))
+    created: list[Route] = []
+    for service, domain, port in entries:
+        route = Route(
+            app_id=app.id,
+            domain=domain,
+            upstream_port=port,
+            service_name=service.name,
+            ssl_enabled=ssl,
+        )
         db.add(route)
-    route.domain = domain
-    route.upstream_port = app.host_port
-    route.ssl_enabled = ssl
+        created.append(route)
     db.commit()
-    db.refresh(route)
-    return route
+    for route in created:
+        db.refresh(route)
+    return created
+
+
+def sync_route(db: Session, app: App) -> Route | None:
+    """兼容入口：返回主入口路由。"""
+    routes = sync_routes(db, app)
+    return routes[0] if routes else None
 
 
 def get_route(db: Session, app_id: int, user: User | None = None) -> Route | None:
-    """查询应用当前路由（未部署或未启用 Nginx 时为 None）。"""
+    """查询应用主入口路由（未部署或未启用 Nginx 时为 None）。"""
+    routes = list_routes(db, app_id, user)
+    if not routes:
+        return None
+    app = get_app(db, app_id, user)
+    domain = route_service.domain_for(app.subdomain)
+    return next((route for route in routes if route.domain == domain), routes[0])
+
+
+def list_routes(db: Session, app_id: int, user: User | None = None) -> list[Route]:
+    """查询应用的全部公开路由（多公开服务时有多条）。"""
     app = get_app(db, app_id, user)
     if not settings.ENABLE_NGINX:
-        return None
-    return db.execute(select(Route).where(Route.app_id == app.id)).scalar_one_or_none()
+        return []
+    return list(
+        db.execute(
+            select(Route).where(Route.app_id == app.id).order_by(Route.id)
+        ).scalars().all()
+    )
 
 
 def image_tag_for(app: App) -> str:
     """构建产物镜像标签：{IMAGE_PREFIX}/{subdomain}:latest。"""
     return f"{settings.IMAGE_PREFIX}/{app.subdomain}:latest"
+
+
+def _build_compose_app(
+    db: Session,
+    app: App,
+    src,
+    profile,
+    port_override: int | None = None,
+) -> tuple[App, Deployment, str | None]:
+    """按单服务 compose 计划构建（或直接采用 image），返回构建结果。
+
+    与普通项目的差异：
+    - 端口、环境变量、启动命令、配额可由 compose 提供；
+    - 若服务只声明 image（无 build），构建阶段只拉取镜像，不再执行 docker build；
+    - 若声明 build，则以 compose 的 context / dockerfile 为构建入口。
+    """
+    plan = profile.compose
+    if plan is None:
+        raise AppError("compose 解析结果缺失")
+
+    notices = [f"按单服务 compose 解析：服务 {plan.service_name}", *plan.notices]
+
+    # 1) 容器端口：compose ports/expose > 请求覆盖值 > 应用已存值
+    port = plan.container_port or port_override or app.container_port
+    if plan.container_port and plan.container_port != app.container_port:
+        notices.append(
+            f"容器端口按 compose 设为 {plan.container_port}（原填写 {app.container_port}）"
+        )
+
+    # 2) 资源配额：compose 声明优先，但仍按宿主真实资源校验
+    mem_limit = plan.mem_limit or app.mem_limit
+    cpu_quota = plan.cpu_quota if plan.cpu_quota is not None else app.cpu_quota
+    if plan.mem_limit or plan.cpu_quota is not None:
+        check = resource_service.check_resources(
+            db, port, mem_limit, cpu_quota, exclude_app_id=app.id
+        )
+        for field in ("mem", "cpu"):
+            if check[field]["level"] == "error":
+                raise AppError(check[field]["message"])
+        if mem_limit != app.mem_limit or cpu_quota != app.cpu_quota:
+            notices.append(f"资源配额按 compose 设为 {mem_limit} / {cpu_quota:g} 核")
+    app.mem_limit = mem_limit
+    app.cpu_quota = cpu_quota
+
+    # 3) 环境变量与启动命令：compose 为准，控制台补充额外变量
+    merged_env = dict(app.env_map)
+    if plan.environment:
+        overlap = sorted(set(plan.environment) & set(merged_env))
+        merged_env.update(plan.environment)
+        if overlap:
+            notices.append(f"compose 覆盖了控制台同名环境变量：{', '.join(overlap)}")
+    _validate_env(merged_env)
+    app.env = json.dumps(merged_env, ensure_ascii=False) if merged_env else None
+    if plan.command:
+        if app.command and app.command != plan.command:
+            notices.append("启动命令沿用控制台配置，已忽略 compose.command")
+        elif not app.command:
+            app.command = plan.command
+
+    # 4) 构建记录
+    image_tag = image_tag_for(app) if plan.needs_build else (plan.image or image_tag_for(app))
+    app.status = "building"
+    app.project_type = "compose"
+    app.container_port = port
+    deployment = Deployment(
+        app_id=app.id,
+        image_tag=image_tag,
+        build_status="building",
+        mem_limit=app.mem_limit,
+        cpu_quota=app.cpu_quota,
+    )
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+
+    log_buffer: list[str] = [f"🧩 {notice}" for notice in notices]
+
+    def _on_log(line: str) -> None:
+        log_buffer.append(line)
+
+    try:
+        if plan.needs_build:
+            context = plan.build_context
+            if context is None:
+                raise AppError("compose 构建上下文缺失")
+            dockerfile = plan.build_dockerfile
+            existing_df = context / (dockerfile or "Dockerfile")
+            regenerate = dockerfile is None or (
+                dockerfile == "Dockerfile"
+                and builder_service.is_platform_generated(existing_df)
+            )
+            if regenerate:
+                sub_profile = builder_service.detect(context, check_compose=False)
+                content = builder_service.generate(context, sub_profile, port)
+                builder_service.write_dockerfile(context, content)
+                dockerfile = "Dockerfile"
+                log_buffer.append(
+                    f"compose 未提供可复用的 Dockerfile，已按 {sub_profile.project_type} "
+                    f"类型生成（监听端口 {port}）"
+                )
+            else:
+                # 用户自带 Dockerfile：与普通 custom 项目执行同一套危险指令扫描
+                security_service.scan_dockerfile(context, dockerfile)
+                log_buffer.append(f"使用 compose 构建上下文：{context} / {dockerfile}")
+            if plan.image:
+                log_buffer.append(f"compose 同时声明 image={plan.image}，构建产物使用平台标签")
+            result = docker_service.build_image(
+                context_dir=str(context),
+                image_tag=image_tag,
+                dockerfile=dockerfile,
+                on_log=_on_log,
+            )
+            if not result.success:
+                deployment.build_status = "failed"
+                app.status = "failed"
+                db.add_all(
+                    [BuildLog(deployment_id=deployment.id, log_line=line) for line in log_buffer]
+                )
+                db.add(
+                    BuildLog(
+                        deployment_id=deployment.id,
+                        log_line=f"[BUILD FAILED] {result.error}",
+                    )
+                )
+                db.commit()
+                db.refresh(deployment)
+                raise AppError(f"镜像构建失败：{result.error}")
+        else:
+            image = plan.image
+            if not image:
+                raise AppError("compose 既未声明 build，也未声明 image")
+            log_buffer.append(f"使用 compose 指定镜像：{image}")
+            docker_service.pull_image(image)
+            app.image = image
+
+    except (
+        docker_service.DockerUnavailableError,
+        security_service.SecurityError,
+        ValueError,
+        FileNotFoundError,
+        OSError,
+    ) as exc:
+        deployment.build_status = "failed"
+        app.status = "failed"
+        log_buffer.append(f"[BUILD FAILED] {exc}")
+        db.add_all(
+            [BuildLog(deployment_id=deployment.id, log_line=line) for line in log_buffer]
+        )
+        db.commit()
+        db.refresh(deployment)
+        raise AppError(str(exc)) from exc
+
+    deployment.build_status = "success"
+    if plan.needs_build:
+        app.image = image_tag
+    app.status = "created"  # 构建完成但未起容器，等待 deploy
+    sync_default_service(
+        db,
+        app,
+        image=app.image,
+        container_port=port,
+        mem_limit=app.mem_limit,
+        cpu_quota=app.cpu_quota,
+        status="created",
+        is_public=True,
+        container_name=default_container_name(app),
+    )
+    db.add_all(
+        [BuildLog(deployment_id=deployment.id, log_line=line) for line in log_buffer]
+    )
+    db.commit()
+    db.refresh(app)
+    db.refresh(deployment)
+
+    notice = "；".join(notices) if notices else None
+    return app, deployment, notice
+
+
+def _effective_limits(app: App, spec) -> tuple[str, float]:
+    mem = spec.mem_limit or (
+        app.mem_limit if spec.is_public else settings.DEFAULT_MEM_LIMIT
+    )
+    cpu = (
+        spec.cpu_quota
+        if spec.cpu_quota is not None
+        else (app.cpu_quota if spec.is_public else settings.DEFAULT_CPU_QUOTA)
+    )
+    return mem, cpu
+
+
+def _prune_services(db: Session, app: App, keep: set[str]) -> None:
+    for service in list(app.services):
+        if service.name not in keep:
+            # 历史库的 metrics 表没有外键级联，显式清理被移除服务的采样
+            db.execute(delete(Metric).where(Metric.service_id == service.id))
+            db.delete(service)
+    db.flush()
+
+
+def _build_compose_multi(
+    db: Session,
+    app: App,
+    plan,
+    port_override: int | None = None,
+) -> tuple[App, Deployment, str | None]:
+    """多服务 compose 构建：逐服务构建 / 拉取镜像并生成服务记录。"""
+    publics = plan.publics
+    if not publics:
+        raise AppError("多服务 compose 缺少公开服务（需要 ports 或 x-paas.public）")
+    public = plan.public or publics[0]
+
+    notices = [f"按多服务 compose 解析：{len(plan.services)} 个服务", *plan.notices]
+    public_port = public.container_port or port_override or app.container_port
+    if public.container_port and public.container_port != app.container_port:
+        notices.append(
+            f"主入口服务容器端口按 compose 设为 {public.container_port}"
+            f"（原填写 {app.container_port}）"
+        )
+    if public.container_port is None:
+        notices.append("主入口服务未声明 ports / expose，沿用新建应用时填写的容器端口")
+
+    # 资源校验：逐服务校验 + 全项目汇总不超过宿主
+    host = resource_service.host_resources()
+    total_mem = 0
+    total_cpu = 0.0
+    for spec in plan.services:
+        mem, cpu = _effective_limits(app, spec)
+        if not spec.mem_limit:
+            notices.append(f"服务 {spec.name} 未声明 mem_limit，使用 {mem}")
+        if spec.cpu_quota is None:
+            notices.append(f"服务 {spec.name} 未声明 cpus，使用 {cpu:g} 核")
+        check = resource_service.check_resources(
+            db, None, mem, cpu, exclude_app_id=app.id
+        )
+        for field in ("mem", "cpu"):
+            if check[field]["level"] == "error":
+                raise AppError(f"服务 {spec.name}：{check[field]['message']}")
+        total_mem += resource_service.parse_mem_limit(mem) or 0
+        total_cpu += cpu
+    if host["mem_total"] and total_mem > host["mem_total"]:
+        raise AppError("compose 中所有服务的内存上限之和超过宿主物理内存")
+    if host["cpu_total"] and total_cpu > host["cpu_total"]:
+        raise AppError("compose 中所有服务的 CPU 配额之和超过宿主核心数")
+
+    image_tag = compose_engine.service_image_tag(app, public)
+    public_mem, public_cpu = _effective_limits(app, public)
+    app.mem_limit = public_mem
+    app.cpu_quota = public_cpu
+    app.status = "building"
+    app.project_type = "compose"
+    app.container_port = public_port
+    deployment = Deployment(
+        app_id=app.id,
+        image_tag=image_tag,
+        build_status="building",
+        mem_limit=app.mem_limit,
+        cpu_quota=app.cpu_quota,
+    )
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+
+    log_buffer: list[str] = [f"🧩 {notice}" for notice in notices]
+
+    try:
+        images = compose_engine.build_images(app, plan, on_log=log_buffer.append)
+    except (
+        compose_engine.ComposeEngineError,
+        docker_service.DockerUnavailableError,
+        security_service.SecurityError,
+        ValueError,
+        OSError,
+    ) as exc:
+        deployment.build_status = "failed"
+        app.status = "failed"
+        log_buffer.append(f"[BUILD FAILED] {exc}")
+        db.add_all(
+            [BuildLog(deployment_id=deployment.id, log_line=line) for line in log_buffer]
+        )
+        db.commit()
+        db.refresh(deployment)
+        raise AppError(str(exc)) from exc
+
+    keep = {spec.name for spec in plan.services}
+    _prune_services(db, app, keep)
+
+    existing = {service.name: service for service in app.services}
+    public_image = images.get(public.name) or public.image or image_tag
+    for spec in plan.services:
+        mem, cpu = _effective_limits(app, spec)
+        service = existing.get(spec.name)
+        if service is None:
+            service = AppService(app_id=app.id, name=spec.name)
+            db.add(service)
+        service.image = images.get(spec.name) or spec.image
+        service.container_port = (
+            spec.container_port or (public_port if spec.is_primary else None)
+        )
+        if not service.container_name:
+            service.container_name = compose_engine.service_container_name(app, spec)
+        service.mem_limit = mem
+        service.cpu_quota = cpu
+        service.status = "created"
+        service.is_public = spec.is_public
+
+    deployment.build_status = "success"
+    app.status = "created"
+    app.image = public_image
+    app.container_port = public_port
+    db.add_all(
+        [BuildLog(deployment_id=deployment.id, log_line=line) for line in log_buffer]
+    )
+    db.commit()
+    db.refresh(app)
+    db.refresh(deployment)
+    return app, deployment, "；".join(notices)
+
+
+def _is_multi_app(app: App) -> bool:
+    return app.project_type == "compose" and len(app.services) > 1
+
+
+def _live_service_status(service: AppService) -> str:
+    """读取服务容器的真实状态，用于蓝绿失败时恢复（构建会先把 DB 状态改成 created）。"""
+    if not service.container_name:
+        return service.status or "created"
+    try:
+        state = docker_service.get(service.container_name).status
+    except (docker_service.ContainerNotFoundError, docker_service.DockerUnavailableError):
+        return service.status or "created"
+    if state == "running":
+        return "running"
+    if state == "created":
+        return "created"
+    return "stopped"
+
+
+def _deploy_compose_multi(
+    db: Session,
+    app: App,
+    plan,
+    payload: DeployIn | None = None,
+) -> App:
+    """部署多服务 compose：多公开服务分配端口，蓝绿槽位切换并支持回滚。"""
+    publics = plan.publics
+    if not publics:
+        raise AppError("多服务 compose 缺少公开服务")
+    primary = plan.public or publics[0]
+
+    rows = {service.name: service for service in app.services}
+    missing = [spec.name for spec in plan.services if spec.name not in rows]
+    if missing:
+        raise AppError(f"服务记录缺失：{', '.join(missing)}，请先重新构建")
+
+    images: dict[str, str] = {}
+    for spec in plan.services:
+        image = rows[spec.name].image or spec.image
+        if not image:
+            raise AppError(f"服务 {spec.name} 尚未构建镜像，请先构建")
+        images[spec.name] = image
+
+    primary_port = primary.container_port or app.container_port
+    if not primary_port:
+        raise AppError("主入口服务未声明容器端口，无法部署")
+
+    reassign = bool(payload and payload.reassign_port)
+    had_active = any(row.container_id and row.container_name for row in app.services)
+    old_statuses = {
+        row.name: _live_service_status(row) if had_active else (row.status or "created")
+        for row in app.services
+    }
+    previous_status = app.status
+    if had_active and app.status != "failed":
+        previous_status = (
+            "running" if any(status == "running" for status in old_statuses.values()) else "stopped"
+        )
+    old_slot = (app.active_slot or "").strip() or ("blue" if had_active else None)
+    old_previous_slot = app.previous_slot
+    old_app_host_port = app.host_port
+    old_refs = {
+        name: (row.container_id, row.container_name, row.host_port, old_statuses[name])
+        for name, row in rows.items()
+    }
+    previous_snapshot = {
+        name: (
+            row.previous_container_id,
+            row.previous_container_name,
+            row.previous_host_port,
+            row.previous_container_port,
+            row.previous_image,
+            row.previous_status,
+        )
+        for name, row in rows.items()
+    }
+
+    app.container_port = primary_port
+    app.status = "building"
+    db.commit()
+
+    deployment = Deployment(
+        app_id=app.id,
+        image_tag=images.get(primary.name),
+        build_status="building",
+        mem_limit=rows[primary.name].mem_limit,
+        cpu_quota=rows[primary.name].cpu_quota,
+        strategy="bluegreen" if had_active else "rolling",
+    )
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+    slot = f"v{deployment.id}"
+
+    host_ports: dict[str, int] = {}
+    for spec in plan.services:
+        row = rows[spec.name]
+        row.previous_container_id = row.container_id
+        row.previous_container_name = row.container_name
+        row.previous_host_port = row.host_port
+        row.previous_container_port = row.container_port
+        row.previous_image = row.image
+        row.previous_status = row.status
+        db.commit()
+        if not spec.is_public:
+            continue
+        # 蓝绿切换必须换新端口，旧槽位仍占用原端口直到切换完成
+        host_ports[spec.name] = port_allocator.reserve_for_service(
+            db, row, force_new=bool(had_active)
+        )
+
+    app.host_port = host_ports[primary.name]
+    deployment.slot = slot
+    deployment.port = host_ports[primary.name]
+    db.commit()
+
+    keep = {slot, old_slot, app.previous_slot}
+    with contextlib.suppress(Exception):
+        compose_engine.prune_slots(app, keep)
+
+    try:
+        deployed = compose_engine.deploy_plan(
+            app, plan, images, host_ports, slot=slot, on_log=logger.info
+        )
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            compose_engine.remove_slot(app, plan, slot)
+        _restore_deploy_snapshot(
+            db, app, rows, old_slot, old_previous_slot, old_app_host_port,
+            previous_status, old_refs, previous_snapshot,
+        )
+        deployment.build_status = "failed"
+        db.commit()
+        raise AppError(f"compose 部署失败：{exc}") from exc
+
+    for spec in plan.services:
+        service = rows[spec.name]
+        info = deployed.get(spec.name)
+        if info is not None:
+            service.container_id = info.container_id
+            service.container_name = info.container_name
+            service.status = "running"
+        else:
+            service.status = "failed"
+        service.image = images.get(spec.name) or spec.image
+        service.is_public = spec.is_public
+        if not spec.is_public:
+            service.host_port = None
+
+    primary_row = rows[primary.name]
+    primary_row.host_port = host_ports[primary.name]
+    app.image = images.get(primary.name)
+    app.host_port = host_ports[primary.name]
+    app.status = "running"
+    app.active_slot = slot
+    app.previous_slot = old_slot
+    deployment.container_id = primary_row.container_id
+    deployment.container_name = primary_row.container_name
+    deployment.image_tag = app.image
+    db.commit()
+
+    try:
+        sync_routes(db, app)
+    except AppError as exc:
+        # 路由切换失败：撤下新槽位，恢复旧槽位与旧路由
+        with contextlib.suppress(Exception):
+            compose_engine.remove_slot(app, plan, slot)
+        _restore_deploy_snapshot(
+            db, app, rows, old_slot, old_previous_slot, old_app_host_port,
+            previous_status, old_refs, previous_snapshot,
+        )
+        deployment.build_status = "failed"
+        deployment.strategy = "bluegreen_failed"
+        db.commit()
+        raise AppError(f"路由切换失败，已回退旧版本：{exc}") from exc
+
+    # 路由已指向新槽位：停止旧槽位容器（保留以便一键回滚），清理更早的版本
+    with contextlib.suppress(Exception):
+        compose_engine.stop_refs([ref[1] for ref in old_refs.values() if ref[1]])
+    with contextlib.suppress(Exception):
+        compose_engine.prune_slots(app, {slot, old_slot})
+
+    deployment.build_status = "success"
+    db.commit()
+    db.refresh(app)
+    return app
+
+
+def _restore_deploy_snapshot(
+    db,
+    app,
+    rows,
+    old_slot,
+    old_previous_slot,
+    old_app_host_port,
+    previous_status,
+    old_refs,
+    previous_snapshot,
+) -> None:
+    """蓝绿部署失败时恢复服务与应用的旧快照（含上一版本回滚信息）。"""
+    for name, row in rows.items():
+        container_id, container_name, host_port, status = old_refs[name]
+        row.container_id = container_id
+        row.container_name = container_name
+        row.host_port = host_port
+        row.status = status or "created"
+        (
+            row.previous_container_id,
+            row.previous_container_name,
+            row.previous_host_port,
+            row.previous_container_port,
+            row.previous_image,
+            row.previous_status,
+        ) = previous_snapshot[name]
+    app.host_port = old_app_host_port
+    app.status = previous_status or "created"
+    app.active_slot = old_slot
+    app.previous_slot = old_previous_slot
+    db.commit()
+
+
+def rollback_app(db: Session, app_id: int, user: User | None = None) -> App:
+    """一键回滚到上一个蓝绿槽位：启动旧容器 → 切回路由 → 停止当前槽位。"""
+    app = get_app(db, app_id, user)
+    if not _is_multi_app(app):
+        raise AppError("仅多容器 compose 应用支持蓝绿回滚")
+    if not app.previous_slot:
+        raise AppError("没有可回滚的上一版本")
+    rows = list(app.services)
+    prev_refs = [row.previous_container_name for row in rows if row.previous_container_name]
+    if not prev_refs:
+        raise AppError("上一版本容器记录缺失，请重新部署")
+    public_rows = [row for row in rows if row.is_public]
+    if any(not row.previous_host_port for row in public_rows):
+        raise AppError("上一版本端口记录缺失，请重新部署")
+    primary = _public_primary(app)
+    if primary is None or not primary.previous_host_port:
+        raise AppError("上一版本主入口端口缺失，请重新部署")
+
+    active_slot = app.active_slot
+    previous_slot = app.previous_slot
+    active_host_port = app.host_port
+    new_primary_port = primary.previous_host_port
+
+    current_snap = {
+        row.id: (
+            row.container_id,
+            row.container_name,
+            row.host_port,
+            row.container_port,
+            row.image,
+            row.status,
+        )
+        for row in rows
+    }
+    previous_snap = {
+        row.id: (
+            row.previous_container_id,
+            row.previous_container_name,
+            row.previous_host_port,
+            row.previous_container_port,
+            row.previous_image,
+            row.previous_status,
+        )
+        for row in rows
+    }
+
+    try:
+        compose_engine.start_refs(prev_refs)
+    except compose_engine.ComposeEngineError as exc:
+        raise AppError(str(exc)) from exc
+
+    for row in rows:
+        current = current_snap[row.id]
+        previous = previous_snap[row.id]
+        (
+            row.container_id,
+            row.container_name,
+            row.host_port,
+            row.container_port,
+            row.image,
+            row.status,
+        ) = (
+            previous[0],
+            previous[1],
+            previous[2],
+            previous[3],
+            previous[4],
+            "running",
+        )
+        (
+            row.previous_container_id,
+            row.previous_container_name,
+            row.previous_host_port,
+            row.previous_container_port,
+            row.previous_image,
+            row.previous_status,
+        ) = current
+
+    app.host_port = new_primary_port
+    app.container_port = primary.container_port or app.container_port
+    app.image = primary.image
+    app.active_slot, app.previous_slot = previous_slot, active_slot
+    app.status = "running"
+    db.commit()
+
+    try:
+        sync_routes(db, app)
+    except AppError as exc:
+        for row in rows:
+            current = current_snap[row.id]
+            previous = previous_snap[row.id]
+            (
+                row.container_id,
+                row.container_name,
+                row.host_port,
+                row.container_port,
+                row.image,
+                row.status,
+            ) = current
+            (
+                row.previous_container_id,
+                row.previous_container_name,
+                row.previous_host_port,
+                row.previous_container_port,
+                row.previous_image,
+                row.previous_status,
+            ) = previous
+        app.host_port = active_host_port
+        app.active_slot = active_slot
+        app.previous_slot = previous_slot
+        db.commit()
+        compose_engine.stop_refs(prev_refs)
+        raise AppError(f"回滚路由切换失败，已保持当前版本：{exc}") from exc
+
+    # 路由已切回旧槽位：停止先前运行的槽位（保留以便再次正向发布）
+    compose_engine.stop_refs(
+        [row.previous_container_name for row in rows if row.previous_container_name]
+    )
+    with contextlib.suppress(Exception):
+        compose_engine.prune_slots(app, {app.active_slot, app.previous_slot})
+
+    deployment = Deployment(
+        app_id=app.id,
+        image_tag=primary.image,
+        build_status="success",
+        container_id=primary.container_id,
+        container_name=primary.container_name,
+        port=app.host_port,
+        mem_limit=primary.mem_limit,
+        cpu_quota=primary.cpu_quota,
+        slot=app.active_slot,
+        strategy="rollback",
+    )
+    db.add(deployment)
+    db.commit()
+    db.refresh(app)
+    return app
 
 
 def ingest_source_zip(db: Session, app_id: int, zip_path, user: User | None = None) -> App:
@@ -337,11 +1250,19 @@ def build_app(
     if not src.exists():
         raise AppError(f"源码目录不存在（可能已被清理）：{app.source_path}")
 
-    # 1) 识别项目类型
+    # 1) 识别项目类型（compose 优先级最高，走独立的单服务构建分支）
     try:
         profile = builder_service.detect(src)
     except (ValueError, FileNotFoundError) as exc:
         raise AppError(str(exc)) from exc
+
+    if profile.project_type == "compose":
+        plan = profile.compose
+        if plan is None:
+            raise AppError("compose 解析结果缺失")
+        if plan.is_multi:
+            return _build_compose_multi(db, app, plan, container_port)
+        return _build_compose_app(db, app, src, profile, container_port)
 
     # 2) 自动读取上传包推断容器端口（paas.json → Dockerfile EXPOSE → 类型默认），
     #    优先于用户填写值，避免"填的端口"与"应用真实监听端口"不一致导致页面打不开
@@ -412,6 +1333,16 @@ def build_app(
     deployment.build_status = "success"
     app.image = image_tag
     app.status = "created"  # 构建完成但未起容器，等待 deploy
+    sync_default_service(
+        db,
+        app,
+        image=image_tag,
+        container_port=port,
+        mem_limit=app.mem_limit,
+        cpu_quota=app.cpu_quota,
+        status="created",
+        is_public=True,
+    )
     db.commit()
     db.refresh(app)
     db.refresh(deployment)
@@ -462,11 +1393,29 @@ def stop_app(db: Session, app_id: int, user: User | None = None) -> App:
     app = get_app(db, app_id, user)
     if not app.host_port:
         raise AppError("应用尚未部署，无需停止")
+    if _is_multi_app(app):
+        refs = [
+            ref
+            for service in app.services
+            for ref in (service.container_name, service.previous_container_name)
+            if ref
+        ]
+        compose_engine.stop_refs(refs)
+        for service in app.services:
+            if service.container_name:
+                service.status = "stopped"
+            if service.previous_container_name:
+                service.previous_status = "stopped"
+        app.status = "stopped"
+        db.commit()
+        db.refresh(app)
+        return app
     try:
         docker_service.stop(docker_service.container_name_for(app.id, app.name))
     except docker_service.ContainerNotFoundError:
         pass
     app.status = "stopped"
+    sync_default_service(db, app, status="stopped")
     db.commit()
     db.refresh(app)
     return app
@@ -476,11 +1425,23 @@ def restart_app(db: Session, app_id: int, user: User | None = None) -> App:
     app = get_app(db, app_id, user)
     if not app.host_port:
         raise AppError("应用尚未部署，无法重启")
+    if _is_multi_app(app):
+        try:
+            compose_engine.restart_plan(app, app.services)
+        except compose_engine.ComposeEngineError as exc:
+            raise AppError(str(exc)) from exc
+        for service in app.services:
+            service.status = "running"
+        app.status = "running"
+        db.commit()
+        db.refresh(app)
+        return app
     try:
         docker_service.restart(docker_service.container_name_for(app.id, app.name))
     except docker_service.ContainerNotFoundError:
         raise AppError("容器不存在，请重新部署") from None
     app.status = "running"
+    sync_default_service(db, app, status="running")
     db.commit()
     db.refresh(app)
     return app
@@ -502,14 +1463,32 @@ def update_quota(
         if check[field]["level"] == "error":
             raise AppError(check[field]["message"])
     if app.status == "running":
-        try:
-            docker_service.update_resources(
-                docker_service.container_name_for(app.id, app.name), mem_limit, cpu_quota
-            )
-        except docker_service.ContainerNotFoundError:
-            pass
+        if _is_multi_app(app):
+            for service in app.services:
+                if not service.is_public or not service.container_name:
+                    continue
+                try:
+                    docker_service.update_resources(
+                        service.container_name, mem_limit, cpu_quota
+                    )
+                except docker_service.ContainerNotFoundError:
+                    continue
+        else:
+            try:
+                docker_service.update_resources(
+                    docker_service.container_name_for(app.id, app.name), mem_limit, cpu_quota
+                )
+            except docker_service.ContainerNotFoundError:
+                pass
     app.mem_limit = mem_limit
     app.cpu_quota = cpu_quota
+    if _is_multi_app(app):
+        for service in app.services:
+            if service.is_public:
+                service.mem_limit = mem_limit
+                service.cpu_quota = cpu_quota
+    else:
+        sync_default_service(db, app, mem_limit=mem_limit, cpu_quota=cpu_quota)
     db.commit()
     db.refresh(app)
     return app
@@ -563,6 +1542,12 @@ def delete_app(db: Session, app_id: int, user: User | None = None) -> None:
             route_service.remove_route(app.id)
         except route_service.RouteError as exc:
             raise AppError(f"路由清理失败，已中止销毁：{exc}") from exc
+    if _is_multi_app(app):
+        with contextlib.suppress(Exception):
+            compose_engine.remove_plan(app, app.services, remove_volumes=True)
+        db.delete(app)
+        db.commit()
+        return
     try:
         docker_service.remove(docker_service.container_name_for(app.id, app.name), force=True)
     except docker_service.ContainerNotFoundError:
@@ -571,15 +1556,25 @@ def delete_app(db: Session, app_id: int, user: User | None = None) -> None:
     db.commit()
 
 
-def app_runtime(db: Session, app_id: int, user: User | None = None) -> dict:
-    """查询应用对应的容器实时状态。"""
+def app_runtime(
+    db: Session, app_id: int, user: User | None = None, service: str | None = None
+) -> dict:
+    """查询应用（或指定服务）对应的容器实时状态。"""
     app = get_app(db, app_id, user)
+    svc, ref = resolve_service_container(app, service)
+    service_name = svc.name if svc is not None else None
     try:
-        info = docker_service.get(docker_service.container_name_for(app.id, app.name))
+        info = docker_service.get(ref)
     except docker_service.ContainerNotFoundError:
-        return {"app_id": app.id, "container": None, "stats": None}
+        return {
+            "app_id": app.id,
+            "service": service_name,
+            "container": None,
+            "stats": None,
+        }
     return {
         "app_id": app.id,
+        "service": service_name,
         "container": info,
         "stats": docker_service.stats(info.name),
     }

@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#ffffff" />
   <title>PocketPaaS 控制台</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=__STATIC_VERSION__" />
 </head>
 <body>
   <div class="layout-shell">
@@ -48,6 +48,14 @@
               <rect x="14" y="14" width="7" height="7" rx="1.5" />
             </svg>
             <span>应用实例</span>
+          </button>
+
+          <button class="nav-item" data-view="ai" type="button">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M11 3.5l1.6 4.1 4.1 1.6-4.1 1.6L11 15l-1.6-4.2L5.3 9.2l4.1-1.6L11 3.5z" />
+              <path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z" />
+            </svg>
+            <span>AI 助手</span>
           </button>
 
           <button class="nav-item" data-view="routes" type="button">
@@ -185,6 +193,44 @@
           </section>
         </div>
 
+        <!-- ==================== 视图：AI 运行分析 ==================== -->
+        <div class="ws-view" data-wsview="ai">
+          <section class="surface-card ai-card">
+            <div class="surface-head">
+              <div>
+                <h3>AI 运行分析</h3>
+                <p class="muted ai-health" id="aiHealth">正在检查 AI 配置…</p>
+              </div>
+              <div class="toolbar">
+                <select class="input select-sm" id="aiApp" aria-label="分析范围">
+                  <option value="">全平台</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" id="aiClear" type="button">清空对话</button>
+              </div>
+            </div>
+
+            <div class="ai-suggest" id="aiSuggest">
+              <button class="ai-chip" type="button" data-ai-action="analyze">总结平台状态</button>
+              <button class="ai-chip" type="button" data-ai-prompt="当前有哪些应用或服务存在风险？请说明判断依据。">风险排查</button>
+              <button class="ai-chip" type="button" data-ai-prompt="解释最近告警的原因，并给出处置建议。">解释告警</button>
+              <button class="ai-chip" type="button" data-ai-prompt="当前平台资源使用是否合理？有哪些优化建议？">资源评估</button>
+            </div>
+
+            <div class="ai-chat" id="aiChat" aria-live="polite">
+              <div class="ai-empty" id="aiEmpty">
+                <span class="ai-empty-icon">AI</span>
+                <p>选择分析范围后提问，AI 会基于当前平台快照给出只读分析与建议。</p>
+              </div>
+            </div>
+
+            <form class="ai-input-row" id="aiForm">
+              <textarea id="aiInput" class="input ai-input" rows="2" maxlength="2000" placeholder="例如：哪些应用需要优先处理？为什么？"></textarea>
+              <button class="btn btn-primary" id="aiSend" type="submit">发送</button>
+            </form>
+            <div class="ai-note muted">AI 仅做只读分析，不会执行部署、重启或删除操作；回答基于当前指标与告警快照。</div>
+          </section>
+        </div>
+
         <!-- ==================== 视图 2：网关路由 ==================== -->
         <div class="ws-view" data-wsview="routes">
           <section class="stats" id="routeStats"></section>
@@ -287,6 +333,37 @@
                   <div class="row"><span class="k">安全检查</span><span class="v">构建前自动扫描特权与敏感挂载</span></div>
                 </div>
                 <button class="btn btn-ghost btn-sm btn-block" data-tpl="custom" data-port="9000" data-demo="custom-service">使用此模板创建</button>
+              </div>
+
+              <div class="tpl-card">
+                <div class="tpl-top">
+                  <span class="tpl-badge compose">COMPOSE</span>
+                  <span class="tag">web + api + worker</span>
+                </div>
+                <h4>多容器 Compose 项目</h4>
+
+                <div class="tpl-meta">
+                  <div class="row"><span class="k">识别判据</span><span class="v">根目录 compose.yaml</span></div>
+                  <div class="row"><span class="k">公开服务</span><span class="v">web 主入口 + api 二级公开</span></div>
+                  <div class="row"><span class="k">内部依赖</span><span class="v">worker（命名卷计数 + 健康检查）</span></div>
+                </div>
+                <button class="btn btn-ghost btn-sm btn-block" data-tpl="compose" data-port="8000" data-demo="compose-demo">使用此模板创建</button>
+              </div>
+
+              <div class="tpl-card tpl-coming" aria-label="更多支持即将上线">
+                <div class="tpl-top">
+                  <span class="tpl-badge soon">MORE</span>
+                  <span class="tag">持续扩展</span>
+                </div>
+                <h4>更多支持即将上线</h4>
+                <p class="tpl-coming-text">
+                  Java、Go、PHP 以及数据库与中间件模板正在准备中；当前也可通过自定义 Dockerfile
+                  或 Compose 提前接入任意技术栈。
+                </p>
+                <div class="tpl-meta">
+                  <div class="row"><span class="k">计划中</span><span class="v">Java · Go · PHP</span></div>
+                  <div class="row"><span class="k">现在可用</span><span class="v">Dockerfile / Compose / Python / Node.js / 静态站点</span></div>
+                </div>
               </div>
             </div>
           </section>
@@ -647,6 +724,12 @@
       </button>
     </div>
 
+    <div class="drawer-servicebar hidden" id="drawerServiceBar">
+      <span class="muted">当前服务</span>
+      <select id="drawerService" class="input input-sm" aria-label="选择服务"></select>
+      <span class="muted drawer-servicebar-tip">指标 / 日志 / 终端 / 文件按该服务查看</span>
+    </div>
+
     <div class="tabs" id="drawerTabs" role="tablist">
       <button class="tab active" data-tab="overview" role="tab">概览</button>
       <button class="tab" data-tab="diagnose" role="tab">诊断</button>
@@ -839,6 +922,10 @@
             <button class="seg-item" data-src="git" type="button">Git 仓库地址</button>
             <button class="seg-item" data-src="demo" type="button">使用内置示例</button>
           </div>
+          <div class="field-hint">
+            根目录包含 docker-compose.yml / compose.yaml 时，平台会按单服务 compose 自动读取镜像、端口、环境变量与启动命令；
+            多服务请在 compose 中通过 x-paas.primary 指定主服务。
+          </div>
         </div>
 
         <div id="wzUploadBox" class="form-row">
@@ -994,6 +1081,6 @@
   <!-- 轻提示 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=__STATIC_VERSION__"></script>
 </body>
 </html>

@@ -49,6 +49,8 @@ description: PocketPaaS 配置读取顺序、核心项、构建、监控、加�
 | `IMAGE_PREFIX` | `paas` | 平台镜像前缀（也是容器名前缀） |
 | `MAX_UPLOAD_MB` | `100` | 源码包解压体积上限 |
 | `BUILD_TIMEOUT` | `900` | 构建超时（秒） |
+| `COMPOSE_START_TIMEOUT` | `60` | 多容器 compose 单服务启动等待（秒） |
+| `COMPOSE_HEALTH_TIMEOUT` | `180` | 多容器 compose 健康检查等待（秒） |
 | `GIT_CLONE_TIMEOUT` | `300` | `git clone` 超时（秒） |
 | `DEFAULT_MEM_LIMIT` | `256m` | 新建应用默认内存上限 |
 | `DEFAULT_CPU_QUOTA` | `1.0` | 新建应用默认 CPU 配额 |
@@ -85,6 +87,26 @@ description: PocketPaaS 配置读取顺序、核心项、构建、监控、加�
 | `ALERT_MEM_PERCENT` | `85.0` | 宿主内存告警阈值（%） |
 | `ALERT_DISK_PERCENT` | `90.0` | 宿主磁盘告警阈值（%） |
 | `ALERT_RESTART_COUNT` | `3` | 单容器连续自动重启告警阈值 |
+
+## AI 只读分析助手
+
+采用 OpenAI 兼容 Chat Completions 协议；`AI_API_KEY` 只从环境变量读取，禁止写入前端或提交仓库。
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `AI_ENABLED` | `false` | AI 模块总开关 |
+| `AI_BASE_URL` | 空 | 供应商接口地址，如 `https://api.deepseek.com/v1` |
+| `AI_API_KEY` | 空 | 供应商密钥，仅服务端使用 |
+| `AI_MODEL` | 空 | 模型名，如 `deepseek-chat` |
+| `AI_PROMPT_FILE` | 空 | 提示词文件；留空使用 `app/prompts/ai_system.md` |
+| `AI_TIMEOUT` | `60` | 单次请求超时（秒） |
+| `AI_MAX_TOKENS` | `1200` | 最大输出 token |
+| `AI_TEMPERATURE` | `0.2` | 输出随机度 |
+| `AI_HISTORY_LIMIT` | `8` | 多轮对话携带的历史消息条数 |
+| `AI_RATE_LIMIT_PER_MIN` | `10` | 每用户每分钟调用上限，`0` 表示不限 |
+| `AI_CONTEXT_APPS` | `30` | 上下文最多携带的应用数量 |
+
+提示词文件默认位于 `backend/app/prompts/ai_system.md`，修改后按 mtime 自动生效。平台数据会用随机 nonce 包裹为独立数据块，尖括号与控制字符会被清洗，系统规则明确要求忽略数据块中的指令性文本。
 
 ## 容器加固与安全
 

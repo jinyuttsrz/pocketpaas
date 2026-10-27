@@ -4,27 +4,40 @@
 由 FastAPI 直接托管，保证在 WSL / 2H4G 线上环境都能开箱即用。
 """
 
+import time
 from pathlib import Path
 
-from fastapi import APIRouter
-from fastapi.responses import FileResponse
-from fastapi import Response
+from fastapi import APIRouter, Response
+from fastapi.responses import HTMLResponse
 
 router = APIRouter(tags=["console"])
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
+# 每次进程启动生成一个版本号，拼到静态资源 URL 上，避免浏览器继续使用旧 app.js / styles.css。
+# 容器重建后版本自动变化，无需手工改 index.html。
+STATIC_VERSION = str(int(time.time()))
+
+
+def _render_page(name: str) -> HTMLResponse:
+    text = (WEB_DIR / name).read_text(encoding="utf-8")
+    text = text.replace("__STATIC_VERSION__", STATIC_VERSION)
+    return HTMLResponse(
+        text,
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
 
 @router.get("/", include_in_schema=False)
-def console() -> FileResponse:
-    """控制台首页：返回 SPA 入口。"""
-    return FileResponse(WEB_DIR / "index.html")
+def console() -> HTMLResponse:
+    """控制台首页：返回 SPA 入口，并注入静态资源版本号。"""
+    return _render_page("index.html")
 
 
 @router.get("/login", include_in_schema=False)
-def login_page() -> FileResponse:
-    """登录 / 注册页。"""
-    return FileResponse(WEB_DIR / "login.html")
+def login_page() -> HTMLResponse:
+    """登录 / 注册页：同样注入静态资源版本号。"""
+    return _render_page("login.html")
 
 
 @router.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)

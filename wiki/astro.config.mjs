@@ -45,7 +45,6 @@ export default defineConfig({
           { label: '服务器部署', link: '/deploy/server/' },
           { label: '域名与双层 Nginx', link: '/deploy/nginx/' },
           { label: '验收与故障排查', link: '/deploy/verify/' },
-          { label: '本站（Wiki）部署', link: '/deploy/wiki-site/' },
         ]},
         { label: '使用指南', items: [
           { label: '应用交付全流程', link: '/guide/apps/' },
@@ -56,11 +55,17 @@ export default defineConfig({
         { label: '参考', items: [
           { label: '系统架构', link: '/reference/architecture/' },
           { label: '配置项', link: '/reference/config/' },
-          { label: 'API 概览', link: '/reference/api/' },
-        ]},
-        { label: '关于', items: [
-          { label: '常见问题', link: '/about/faq/' },
-          { label: '毕业设计摘要', link: '/about/thesis/' },
+          { label: '接口文档', collapsed: false, items: [
+            { label: '总览与约定', link: '/reference/api/' },
+            { label: '认证与用户', link: '/reference/api/auth-users/' },
+            { label: '应用管理', link: '/reference/api/apps/' },
+            { label: '源码与构建', link: '/reference/api/source-build/' },
+            { label: '部署与运行观测', link: '/reference/api/runtime/' },
+            { label: '文件管理', link: '/reference/api/files/' },
+            { label: 'Webhook 自动部署', link: '/reference/api/webhook/' },
+            { label: '告警、审计与系统', link: '/reference/api/system/' },
+            { label: 'WebSocket', link: '/reference/api/websocket/' },
+          ]},
         ]},
       ],
     }),

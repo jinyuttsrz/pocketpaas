@@ -41,3 +41,18 @@
   color: var(--sl-color-gray-3);
   line-height: 1.6;
 }
+
+/* 文档插图：白底图在深色主题下加描边与圆角，题注居中 */
+.sl-markdown-content img[src*='/images/diagrams/'] {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.diagram-caption {
+  margin-top: -0.25rem;
+  margin-bottom: 1.25rem;
+  text-align: center;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}

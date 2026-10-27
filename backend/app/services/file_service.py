@@ -407,13 +407,18 @@ def _zip_source_dir(src: Path, dest: Path, max_bytes: int) -> None:
 
 
 class _ContainerBackend:
-    """运行中容器文件系统后端。"""
+    """运行中容器文件系统后端。
+
+    `service_name` 指定多容器应用中的具体服务；为空时取公开服务。
+    """
 
     target = TARGET_CONTAINER
 
-    def __init__(self, app) -> None:
+    def __init__(self, app, service_name: str | None = None) -> None:
+        from app.services import app_service  # 延迟导入，避免循环依赖
+
         self._app = app
-        self._ref = docker_service.container_name_for(app.id, app.name)
+        self._service, self._ref = app_service.resolve_service_container(app, service_name)
         self._base: Path | None = None
 
     # -- 容器解析 --------------------------------------------------------
@@ -687,7 +692,9 @@ class _ShellUnavailable(Exception):
 # ---------------------------------------------------------------------------
 
 
-def resolve_backend(db, app_id: int, target: str, user) -> tuple[_Backend, object]:
+def resolve_backend(
+    db, app_id: int, target: str, user, service: str | None = None
+) -> tuple[_Backend, object]:
     """按目标解析后端，并做应用归属校验。"""
     from app.services import app_service  # 延迟导入，避免循环依赖
 
@@ -696,16 +703,18 @@ def resolve_backend(db, app_id: int, target: str, user) -> tuple[_Backend, objec
     app = app_service.get_app(db, app_id, user)
     if target == TARGET_SOURCE:
         return _SourceBackend(app.id), app
-    return _ContainerBackend(app), app
+    return _ContainerBackend(app, service), app
 
 
-def target_states(db, app_id: int, user) -> dict[str, dict]:
+def target_states(
+    db, app_id: int, user, service: str | None = None
+) -> dict[str, dict]:
     """返回两个目标的可用性快照，供前端置灰不可用目标。"""
     from app.services import app_service
 
     app = app_service.get_app(db, app_id, user)
     source_ok, source_reason = _SourceBackend(app.id).availability()
-    container_ok, container_reason = _ContainerBackend(app).availability()
+    container_ok, container_reason = _ContainerBackend(app, service).availability()
     return {
         TARGET_SOURCE: {
             "label": TARGET_LABELS[TARGET_SOURCE],

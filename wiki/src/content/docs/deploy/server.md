@@ -12,10 +12,9 @@ description: Ubuntu + 宝塔面板 + Docker Compose 的完整上线步骤，含�
 因此平台容器使用 `network_mode: host`；而宿主已有的宝塔 nginx 会占用 80 端口，
 所以采用**双层 Nginx**：
 
-```text
-浏览器 ──:80──▶ 宝塔 nginx ──:8080──▶ 平台内层 nginx ─┬─ 127.0.0.1:8000   平台控制台
-                                                      └─ 127.0.0.1:2000x  应用容器
-```
+![双层 Nginx 与端口衔接](/images/diagrams/nginx.png)
+
+<div class="diagram-caption">图　双层 Nginx 与端口衔接</div>
 
 平台容器（`network_mode: host`）内同时运行：
 
@@ -155,7 +154,7 @@ compose 里 5 条 `volumes` 各有明确用途：
 
 ```bash
 docker exec pocketpaas ls /demo
-# 应列出 static-demo.zip  python-demo.zip  node-demo.zip  custom-demo.zip
+# 应列出 static-demo.zip  python-demo.zip  node-demo.zip  custom-demo.zip  compose-demo.zip
 ```
 
 ### 5. 检查端口占用
@@ -186,6 +185,85 @@ nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)
 只改了挂载或 `.env.prod` 也必须执行它（compose 会自动重建容器），无需手工 `docker rm`。
 **不要**用 `docker compose down -v`：`-v` 会连卷一起删除，数据会丢。
 :::
+
+## 更新已部署实例
+
+已经上线过的服务器升级时，重点是**保留 `.env.prod` 与 `paas-data`**。平台容器重建不会停止用户应用容器，控制台会有短暂重启。
+
+### 1. 备份
+
+```bash
+cd /opt/pocketpaas
+STAMP=$(date +%Y%m%d-%H%M%S)
+mkdir -p /opt/pocketpaas-backup/$STAMP
+
+# 一致性更高的 SQLite 备份（写入同一挂载目录）
+docker exec pocketpaas python -c "import sqlite3; s=sqlite3.connect('/data/paas.db'); d=sqlite3.connect('/data/paas.db.bak'); s.backup(d); d.close(); s.close()"
+
+cp -a backend/.env.prod /opt/pocketpaas-backup/$STAMP/
+cp -a paas-data /opt/pocketpaas-backup/$STAMP/
+cp -a deploy /opt/pocketpaas-backup/$STAMP/
+docker tag pocketpaas:latest pocketpaas:backup-$STAMP 2>/dev/null || true
+```
+
+### 2. 更新代码
+
+Git 部署：
+
+```bash
+git fetch --all
+git status
+git pull --ff-only
+```
+
+非 Git 部署：用 `scp` / `rsync` 上传新代码，但**不要覆盖**：
+
+```text
+backend/.env.prod
+paas-data/
+backend/workspace/
+backend/paas.db
+```
+
+同时确认新目录 `backend/app/prompts/` 与 `demo/compose-demo.zip` 已上传。
+
+### 3. 合并新配置
+
+不要用 `.env.prod.example` 直接覆盖线上配置，只在 `backend/.env.prod` 中追加/修改新增项，例如：
+
+```ini
+AI_ENABLED=true
+AI_BASE_URL=https://api.siliconflow.cn/v1
+AI_API_KEY=你的密钥
+AI_MODEL=Qwen/Qwen3-8B
+AI_PROMPT_FILE=
+```
+
+### 4. 重建并验证
+
+```bash
+docker compose up -d --build
+docker compose logs -f --tail=200 pocketpaas
+```
+
+```bash
+curl -fsS http://127.0.0.1:8000/api/health
+curl -fsS http://127.0.0.1:8000/api/ready
+docker exec pocketpaas ls /demo | grep compose-demo.zip
+docker exec pocketpaas test -f /app/app/prompts/ai_system.md && echo prompt-ok
+```
+
+数据库新增列由 `init_db()` 自动补齐；如升级失败，先 `docker compose down`（不要加 `-v`），恢复备份的 `paas-data` 与镜像标签后再启动。
+
+### 5. 回滚
+
+```bash
+docker compose down
+docker tag pocketpaas:backup-$STAMP pocketpaas:latest
+cp -a /opt/pocketpaas-backup/$STAMP/paas-data ./paas-data
+cp -a /opt/pocketpaas-backup/$STAMP/.env.prod backend/.env.prod
+docker compose up -d
+```
 
 ### 7. 配置宝塔侧外层反代
 

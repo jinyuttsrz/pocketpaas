@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 100
     # 构建并发上限之外的构建超时（秒）
     BUILD_TIMEOUT: int = 900
+    # 多容器 compose：等待服务启动 / 健康检查的超时（秒）
+    COMPOSE_START_TIMEOUT: int = 60
+    COMPOSE_HEALTH_TIMEOUT: int = 180
     # git clone 超时（秒）
     GIT_CLONE_TIMEOUT: int = 300
     # 构建期 pip 源（本地网络受限时用国内镜像；线上留空走官方源）
@@ -161,6 +164,29 @@ class Settings(BaseSettings):
     AUTH_BOOTSTRAP_ADMIN: bool = True
     AUTH_DEFAULT_USERNAME: str = "admin"
     AUTH_DEFAULT_PASSWORD: str = "admin12345"
+
+    # ------------------------------------------------------------------
+    # AI 只读分析助手（OpenAI 兼容接口）
+    # ------------------------------------------------------------------
+    # 总开关：未配置完整参数时保持关闭，不影响平台其它功能
+    AI_ENABLED: bool = False
+    # 供应商 Base URL，例如 https://api.deepseek.com/v1
+    AI_BASE_URL: str = ""
+    # 仅从环境变量注入，禁止写入代码或前端
+    AI_API_KEY: str = ""
+    AI_MODEL: str = ""
+    # 系统提示词文件：留空使用 app/prompts/ai_system.md；相对路径以 backend 根目录为基准
+    AI_PROMPT_FILE: str = ""
+    # 单次请求超时（秒）与最大输出 token
+    AI_TIMEOUT: float = 60.0
+    AI_MAX_TOKENS: int = 1200
+    AI_TEMPERATURE: float = 0.2
+    # 多轮对话最多携带的历史消息条数
+    AI_HISTORY_LIMIT: int = 8
+    # 每用户每分钟最多调用次数（<=0 表示不限制）
+    AI_RATE_LIMIT_PER_MIN: int = 10
+    # 上下文最多携带的应用数量，避免 token 膨胀
+    AI_CONTEXT_APPS: int = 30
 
     @property
     def is_local(self) -> bool:

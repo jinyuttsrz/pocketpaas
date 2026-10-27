@@ -64,13 +64,16 @@ def list_files(
     app_id: int,
     target: str = Query("source", description="source=项目源码目录，container=运行中容器文件"),
     path: str = Query("", description="相对目标根目录的路径，根目录留空"),
+    service: str = Query("", description="container 目标对应的服务名，缺省取公开服务"),
     user: User | None = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> FileListOut:
     try:
-        backend, _app = file_service.resolve_backend(db, app_id, target, user)
+        backend, _app = file_service.resolve_backend(
+            db, app_id, target, user, service or None
+        )
         entries, truncated = backend.list(path)
-        states = file_service.target_states(db, app_id, user)
+        states = file_service.target_states(db, app_id, user, service or None)
     except Exception as exc:  # noqa: BLE001 - 统一交给 _handle 映射
         raise _handle(exc) from exc
     return FileListOut(
@@ -89,11 +92,14 @@ def read_file(
     app_id: int,
     target: str = Query("source"),
     path: str = Query(..., description="相对目标根目录的文件路径"),
+    service: str = Query("", description="container 目标对应的服务名"),
     user: User | None = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> FileContentOut:
     try:
-        backend, _app = file_service.resolve_backend(db, app_id, target, user)
+        backend, _app = file_service.resolve_backend(
+            db, app_id, target, user, service or None
+        )
         data, truncated = backend.read(path, _READ_LIMIT)
     except Exception as exc:  # noqa: BLE001
         raise _handle(exc) from exc
@@ -123,7 +129,9 @@ def write_file(
             detail=f"内容超过 {settings.FILE_MAX_UPLOAD_MB}MB 上限，请改用上传文件",
         )
     try:
-        backend, app = file_service.resolve_backend(db, app_id, payload.target, user)
+        backend, app = file_service.resolve_backend(
+            db, app_id, payload.target, user, payload.service
+        )
         backend.write(payload.path, data)
     except Exception as exc:  # noqa: BLE001
         raise _handle(exc) from exc
@@ -133,7 +141,12 @@ def write_file(
         user,
         "app.file",
         app,
-        detail={"op": "write", "target": payload.target, "path": payload.path},
+        detail={
+            "op": "write",
+            "target": payload.target,
+            "path": payload.path,
+            "service": payload.service,
+        },
     )
     return FileOpResultOut(message="文件已保存")
 
@@ -144,6 +157,7 @@ async def upload_files(
     request: Request,
     target: str = Form("source"),
     path: str = Form(""),
+    service: str = Form(""),
     files: list[UploadFile] = File(..., description="待上传的文件，可多选"),
     user: User | None = Depends(require_user),
     db: Session = Depends(get_db),
@@ -151,7 +165,9 @@ async def upload_files(
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="没有收到上传的文件")
     try:
-        backend, app = file_service.resolve_backend(db, app_id, target, user)
+        backend, app = file_service.resolve_backend(
+            db, app_id, target, user, service or None
+        )
         base = file_service.normalize_path(path)
         saved = 0
         for item in files:
@@ -183,7 +199,7 @@ async def upload_files(
         user,
         "app.file",
         app,
-        detail={"op": "upload", "target": target, "path": base, "count": saved},
+        detail={"op": "upload", "target": target, "path": base, "count": saved, "service": service or None},
     )
     return FileOpResultOut(message=f"已上传 {saved} 个文件", count=saved)
 
@@ -197,7 +213,9 @@ def file_op(
     db: Session = Depends(get_db),
 ) -> FileOpResultOut:
     try:
-        backend, app = file_service.resolve_backend(db, app_id, payload.target, user)
+        backend, app = file_service.resolve_backend(
+            db, app_id, payload.target, user, payload.service
+        )
         if payload.op == "mkdir":
             backend.mkdir(payload.path)
             message = "文件夹已创建"
@@ -222,6 +240,7 @@ def file_op(
             "target": payload.target,
             "path": payload.path,
             "new_name": payload.new_name,
+            "service": payload.service,
         },
     )
     return FileOpResultOut(message=message)
@@ -232,11 +251,14 @@ def download_file(
     app_id: int,
     target: str = Query("source"),
     path: str = Query("", description="相对目标根目录的路径，根目录即整包"),
+    service: str = Query("", description="container 目标对应的服务名"),
     user: User | None = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> FileResponse:
     try:
-        backend, _app = file_service.resolve_backend(db, app_id, target, user)
+        backend, _app = file_service.resolve_backend(
+            db, app_id, target, user, service or None
+        )
         result = backend.stream(path, _ARCHIVE_LIMIT)
     except Exception as exc:  # noqa: BLE001
         raise _handle(exc) from exc

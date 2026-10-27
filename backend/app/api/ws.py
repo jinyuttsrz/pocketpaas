@@ -51,13 +51,17 @@ async def stream_app_logs(websocket: WebSocket, app_id: int, db: Session = Depen
     try:
         # 归属校验：普通用户仅能查看自己应用的日志，管理员可看全部
         app = app_service.get_app(db, app_id, user)
-    except app_service.AppError:
-        await websocket.send_text(_msg("error", message="应用不存在"))
+        # 服务选择：未指定时取公开服务；多容器应用可指定具体服务
+        service, ref = app_service.resolve_service_container(
+            app, websocket.query_params.get("service")
+        )
+    except app_service.AppError as exc:
+        await websocket.send_text(_msg("error", message=str(exc)))
         await websocket.close(code=4404)
         return
 
-    ref = docker_service.container_name_for(app.id, app.name)
     tail = int(websocket.query_params.get("tail", "200"))
+    service_name = service.name if service is not None else "default"
 
     try:
         stream = docker_service.stream_logs(ref, tail=max(tail, 0))
@@ -70,7 +74,7 @@ async def stream_app_logs(websocket: WebSocket, app_id: int, db: Session = Depen
         await websocket.close(code=1011)
         return
 
-    await websocket.send_text(_msg("open", app=app.name, container=ref))
+    await websocket.send_text(_msg("open", app=app.name, service=service_name, container=ref))
     try:
         loop = asyncio.get_running_loop()
         while True:
@@ -120,12 +124,14 @@ async def shell_session(websocket: WebSocket, app_id: int, db: Session = Depends
 
     try:
         app = app_service.get_app(db, app_id, user)
-    except app_service.AppError:
-        await websocket.send_text(_msg("error", message="应用不存在"))
+        service, ref = app_service.resolve_service_container(
+            app, websocket.query_params.get("service")
+        )
+    except app_service.AppError as exc:
+        await websocket.send_text(_msg("error", message=str(exc)))
         await websocket.close(code=4404)
         return
 
-    ref = docker_service.container_name_for(app.id, app.name)
     try:
         session = docker_service.open_shell(ref)
     except docker_service.ContainerNotFoundError as exc:
@@ -138,7 +144,13 @@ async def shell_session(websocket: WebSocket, app_id: int, db: Session = Depends
         return
 
     await websocket.send_text(
-        _msg("open", app=app.name, container=ref, target="容器文件系统")
+        _msg(
+            "open",
+            app=app.name,
+            service=service.name if service is not None else "default",
+            container=ref,
+            target="容器文件系统",
+        )
     )
 
     loop = asyncio.get_running_loop()

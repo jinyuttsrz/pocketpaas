@@ -36,12 +36,42 @@ description: 从创建应用到对外访问的完整链路：源码接入、类�
 
 源码包大小上限由 `MAX_UPLOAD_MB`（默认 `100`）控制。
 
+:::note[Docker Compose]
+源码根目录包含 `docker-compose.yml` / `compose.yaml` 时，平台会优先按 compose 解析，
+既支持单服务，也支持 `web + db` 这类多服务项目：
+
+- 所有带 `ports` 的服务默认都会公开；也可以用顶层 `x-paas.public: [web, api]` 显式指定公开集合，
+  用 `x-paas.primary` 指定主入口（缺省取公开集合第一个）；
+- 主入口沿用应用域名 `{应用名}.{BASE_DOMAIN}`，其他公开服务使用
+  `{应用名}-{服务名}.{BASE_DOMAIN}`；每个公开服务独立分配宿主端口；
+- 按 `depends_on` 拓扑顺序启动，支持 `healthcheck` / `service_healthy` 条件；
+- 支持 `image`、`build`、`environment`、`env_file`、`command`、`entrypoint`、命名卷、资源限制与容器加固；
+- 拒绝宿主 bind mount、`privileged`、`network_mode: host`、`cap_add`、`secrets` 等突破隔离的字段。
+:::
+
+部署完成后，详情抽屉顶部会出现**服务选择器**。选中某个服务后，负载曲线、实时日志、Web 终端、
+容器文件与一键诊断都会切换到该服务；单容器应用不显示选择器。多服务应用也可在「概览」的
+服务标签上单独重启某个服务，用于排障时只重启数据库或缓存，而不影响公开服务。
+
+### 多公开服务与蓝绿发布
+
+多服务 compose 的每次部署会创建一套新的**版本槽位**（`v{部署ID}`）容器：
+
+1. 新槽位在独立网络内启动，旧槽位继续提供服务；
+2. 全部服务启动成功且路由切换成功后，流量切到新槽位；
+3. 旧槽位容器停止但保留，可在详情抽屉点「回滚上一版本」一键切回；
+4. 再下一次成功部署才会清理更早的槽位，因此始终保留最近两个版本。
+
+命名卷由新旧槽位共享，数据库等有状态服务在切换窗口内可能被新旧实例同时挂载；对数据一致性要求高的
+项目，建议在低峰期发布或先停止写入。单容器应用仍使用原有的重建部署方式。
+
 ## 3. 项目类型识别与 Dockerfile 生成
 
-平台按源码特征识别三类项目并生成对应 Dockerfile：
+平台按源码特征识别四类项目并生成对应 Dockerfile：
 
 | 类型 | 识别特征 | 默认端口 |
 |---|---|---|
+| `compose` | 根目录存在 `docker-compose.yml` / `compose.yaml` | 取 compose 的 `ports` / `expose` |
 | `python` | 存在 `main.py` / `requirements.txt` 等 | 沿用用户填写值 |
 | `static` | 纯静态 HTML 站点 | 沿用用户填写值 |
 | `node` | 存在 `package.json` / `server.js` | `3000` |
@@ -49,10 +79,11 @@ description: 从创建应用到对外访问的完整链路：源码接入、类�
 
 容器端口推断优先级（从高到低）：
 
-1. 源码包根目录 `paas.json` / `.paas.json` 中的 `port` 字段（显式声明，优先级最高）；
-2. 自带 Dockerfile 中的 `EXPOSE` 指令（取第一个合法端口，兼容 `7070/tcp` 形式）；
-3. 项目类型默认端口（Node 取 3000，自带 Dockerfile 的 custom 缺省取 8000）；
-4. Python / 静态站类型不覆盖，沿用用户填写值。
+1. 单服务 compose 中的 `x-paas.port`（显式覆盖），其次是 `ports` / `expose`；
+2. 源码包根目录 `paas.json` / `.paas.json` 中的 `port` 字段（显式声明）；
+3. 自带 Dockerfile 中的 `EXPOSE` 指令（取第一个合法端口，兼容 `7070/tcp` 形式）；
+4. 项目类型默认端口（Node 取 3000，自带 Dockerfile 的 custom 缺省取 8000）；
+5. Python / 静态站类型不覆盖，沿用用户填写值。
 
 :::danger[危险指令会被拦截]
 构建前会扫描 Dockerfile 中的高危指令（`BLOCK_DANGEROUS_DOCKERFILE=true`），命中即拒绝构建。
@@ -113,14 +144,16 @@ description: 从创建应用到对外访问的完整链路：源码接入、类�
 | 操作 | 效果 |
 |---|---|
 | 停止 | 停止容器，保留镜像与源码 |
-| 重启 | 重启容器 |
+| 重启 | 重启应用内全部服务容器 |
+| 重启单个服务 | 只重启选中的服务容器（多容器 compose） |
+| 回滚上一版本 | 切回上一个蓝绿槽位的容器与端口（多容器 compose） |
 | 销毁 | 删除应用及其容器、镜像与源码记录 |
 
 正常清理请使用控制台的停止 / 销毁，让数据库记录与容器状态保持一致。
 
 ## 9. 内置示例包怎么用
 
-「模板与指南」页提供 4 个示例：
+「模板与指南」页提供 5 个示例：
 
 | 示例 | 类型 | 体验点 |
 |---|---|---|
@@ -128,11 +161,13 @@ description: 从创建应用到对外访问的完整链路：源码接入、类�
 | `python-demo` | python | Python 项目识别与依赖安装 |
 | `node-demo` | node | Node 项目识别与端口推断 |
 | `custom-demo` | custom | 自带 Dockerfile 的自定义构建路径 |
+| `compose-demo` | compose | 多公开服务、内部 DNS、健康检查、命名卷与蓝绿回滚 |
 
 一键创建后即可依次验证构建、部署、日志、诊断与文件管理。
 
 ## 相关页面
 
+- 接口清单：[应用管理](/reference/api/apps/)与[源码与构建](/reference/api/source-build/)
 - 文件与终端：[项目文件与终端](/guide/files-terminal/)
 - 日志、探针与告警：[监控、告警与审计](/guide/observability/)
 - 自动部署：[Git Webhook 自动部署](/guide/webhook/)

@@ -5,6 +5,7 @@
 const API = "/api";
 let apps = [];
 let current = null;      // 当前详情应用
+let currentService = null; // 详情抽屉当前选中的服务（多容器 compose）
 let ws = null;           // 实时日志 WebSocket
 let metricsTimer = null; // 负载曲线定时刷新
 let listTimer = null;    // 列表自动刷新
@@ -13,7 +14,7 @@ let users = [];          // 管理员：用户列表
 let ownerFilter = "";    // 管理员：按所属用户筛选（空=全部）
 
 // 多视图状态
-let activeView = "apps"; // apps | routes | templates | files | nodes | alerts | audit | users
+let activeView = "apps"; // apps | ai | routes | templates | files | nodes | alerts | audit | users
 let readyInfo = null;    // /api/ready 缓存
 let poolInfo = null;     // /api/system/resource-check 端口池与宿主资源缓存
 let routeQuery = "";     // 路由表搜索词
@@ -93,6 +94,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
 /* ---------------- 视图切换 ---------------- */
 const VIEW_TITLES = {
   apps: "应用交付与实例管理",
+  ai: "AI 运行分析",
   routes: "网关路由与端口映射",
   templates: "项目模板与接入指南",
   files: "项目文件浏览与编辑",
@@ -121,6 +123,8 @@ function switchWorkspaceView(view) {
   if (view === "routes") {
     loadPoolResources();
     renderRoutesView();
+  } else if (view === "ai") {
+    renderAiView();
   } else if (view === "files") {
     renderFilePage();
   } else if (view === "nodes") {
@@ -594,6 +598,7 @@ async function loadApps() {
     apps = await api("/apps");
     syncOwnerOptions();
     renderList();
+    if (activeView === "ai") renderAiAppOptions();
   } catch (e) {
     toast("加载应用列表失败：" + e.message, "err");
   }
@@ -618,6 +623,12 @@ async function onCardAction(id, act) {
     }
     if (act === "stop") { await api(`/apps/${id}/stop`, { method: "POST" }); toast("已停止", "ok"); return loadApps(); }
     if (act === "restart") { await api(`/apps/${id}/restart`, { method: "POST" }); toast("已启动", "ok"); return loadApps(); }
+    if (act === "rollback") {
+      if (!confirm(`确定将应用「${a.name}」回滚到上一版本？`)) return;
+      await api(`/apps/${id}/rollback`, { method: "POST" });
+      toast("已回滚到上一版本", "ok");
+      return current?.id === id ? refreshCurrent() : loadApps();
+    }
   } catch (e) {
     toast(act + " 失败：" + e.message, "err");
     loadApps();
@@ -745,10 +756,12 @@ function openDrawer(app) {
   current = app;
   quotaEditing = false;
   cfgEditing = false;
+  currentService = defaultService(app);
   $("#drawerMask").classList.remove("hidden");
   $("#drawer").classList.remove("hidden");
   switchTab("overview");
   renderDrawerHead();
+  syncServiceSelect();
   renderOverview();
   renderActions();
   loadBuildLogs();
@@ -769,11 +782,108 @@ function closeDrawer() {
   resetDrawerFiles();
   closeEditor();
   current = null;
+  currentService = null;
+}
+
+/* 多容器服务：默认选中公开服务，否则取第一个 */
+function defaultService(app) {
+  const list = (app && app.services) || [];
+  return (list.find((s) => s.is_public) || list[0] || {}).name || null;
+}
+
+/* 刷新详情抽屉的服务选择器；单服务应用隐藏该控件 */
+function syncServiceSelect() {
+  const bar = $("#drawerServiceBar");
+  const sel = $("#drawerService");
+  if (!bar || !sel) return;
+  const list = (current && current.services) || [];
+  if (list.length <= 1) {
+    bar.classList.add("hidden");
+    sel.innerHTML = "";
+    currentService = list[0] ? list[0].name : null;
+    return;
+  }
+  bar.classList.remove("hidden");
+  if (!list.some((s) => s.name === currentService)) currentService = defaultService(current);
+  sel.innerHTML = list
+    .map(
+      (s) =>
+        `<option value="${esc(s.name)}">${esc(s.name)}${s.is_public ? "（公开）" : ""} · ${esc(STATUS_TEXT[s.status] || s.status || "未知")}</option>`,
+    )
+    .join("");
+  sel.value = currentService || "";
+}
+
+/* 切换服务：断开旧连接，按当前 tab 重建对应视图 */
+function onServiceChange(name) {
+  currentService = name || null;
+  stopWs();
+  drawerTerm.stop();
+  loadMetrics();
+  const tab = ($("#drawerTabs .tab.active") || {}).dataset;
+  if (!tab) return;
+  if (tab.tab === "livelogs") startWs();
+  else if (tab.tab === "terminal") drawerTerm.start();
+  else if (tab.tab === "files") {
+    const inst = fmInstances.drawer;
+    if (inst) fmLoad(inst);
+  }
+  else if (tab.tab === "diagnose") runDiagnose();
 }
 
 function renderDrawerHead() {
   $("#drawerTitle").textContent = current.name;
   $("#drawerSub").innerHTML = `${esc(current.subdomain)} · ${STATUS_TEXT[current.status] || current.status}`;
+}
+
+/* 多容器服务：列表展示服务名、公开入口、状态、宿主端口；可单独重启 */
+function renderServiceTags(services) {
+  if (!services || !services.length) return "<span class='muted'>—</span>";
+  const publicCount = services.filter((s) => s.is_public).length;
+  const summary =
+    services.length > 1
+      ? `<div class="svc-summary">${services.length} 个服务 · ${publicCount} 个公开</div>`
+      : "";
+  const rows = services
+    .map((s) => {
+      const statusKey = s.status === "restarting" ? "building" : STATUS_TEXT[s.status] ? s.status : "created";
+      const statusText = s.status === "restarting" ? "重启中" : STATUS_TEXT[statusKey] || s.status || "未知";
+      const name = s.access_url
+        ? `<a class="svc-name" href="${esc(s.access_url)}" target="_blank" rel="noopener" title="打开 ${esc(s.access_url)}">${esc(s.name)}</a>`
+        : `<span class="svc-name">${esc(s.name)}</span>`;
+      const badge = s.is_primary
+        ? `<span class="svc-badge primary">主入口</span>`
+        : s.is_public
+          ? `<span class="svc-badge public">公开</span>`
+          : `<span class="svc-badge internal">内部</span>`;
+      const port = s.host_port
+        ? `<span class="svc-port" title="宿主端口">:${s.host_port}</span>`
+        : `<span class="svc-port muted">仅内网</span>`;
+      const pulse = statusKey === "building" ? " pulse" : "";
+      return `<div class="svc-item" title="${esc(s.container_name || "")}">
+        <span class="svc-dot ${statusKey}${pulse}" title="${statusText}"></span>
+        <div class="svc-main">${name}${badge}<span class="svc-state">${statusText}</span></div>
+        ${port}
+        <button class="svc-restart" type="button" data-svc-restart="${esc(s.name)}" title="重启服务 ${esc(s.name)}">↻</button>
+      </div>`;
+    })
+    .join("");
+  return `<div class="svc-list">${summary}<div class="svc-rows">${rows}</div></div>`;
+}
+
+async function restartService(name) {
+  if (!current) return;
+  try {
+    const updated = await api(`/apps/${current.id}/services/${encodeURIComponent(name)}/restart`, { method: "POST" });
+    current = updated;
+    syncServiceSelect();
+    renderOverview();
+    renderActions();
+    toast(`服务 ${name} 已重启`, "ok");
+    loadApps();
+  } catch (e) {
+    toast("重启失败：" + e.message, "err");
+  }
 }
 
 function renderOverview() {
@@ -786,6 +896,7 @@ function renderOverview() {
       <tr><td>访问入口</td><td>${access}</td></tr>
       <tr><td>镜像</td><td>${a.image ? `<span class="tag">${esc(a.image)}</span>` : "<span class='muted'>尚未构建</span>"}</td></tr>
       <tr><td>项目类型</td><td>${a.project_type ? `<span class="tag">${esc(a.project_type)}</span>` : "—"}</td></tr>
+      <tr><td>服务</td><td>${renderServiceTags(a.services)}</td></tr>
       <tr><td>容器端口</td><td>${a.container_port}</td></tr>
       <tr><td>宿主端口</td><td>${a.host_port ?? "—"}</td></tr>
       <tr><td>就绪状态</td><td id="readyCell"><span class="muted">探测中…</span></td></tr>
@@ -811,6 +922,7 @@ function renderActions() {
   btns.push(`<button class="btn btn-primary btn-sm" data-dact="deploy">${a.status === "created" ? "构建部署" : "重新部署"}</button>`);
   if (a.status === "running") btns.push(`<button class="btn btn-ghost btn-sm" data-dact="stop">停止</button>`);
   if (a.status === "stopped" || a.status === "failed") btns.push(`<button class="btn btn-ghost btn-sm" data-dact="restart">启动</button>`);
+  if (a.previous_slot) btns.push(`<button class="btn btn-ghost btn-sm" data-dact="rollback">回滚上一版本</button>`);
   if (a.access_url) btns.push(`<a class="btn btn-ghost btn-sm" href="${esc(a.access_url)}" target="_blank" rel="noopener">打开应用</a>`);
   btns.push(`<button class="btn btn-danger btn-sm" data-dact="delete">销毁</button>`);
   $("#drawerActions").innerHTML = btns.join("");
@@ -818,9 +930,11 @@ function renderActions() {
 
 async function refreshCurrent() {
   if (!current) return;
+  const prevService = currentService;
   try {
     current = await api(`/apps/${current.id}`);
-    renderDrawerHead(); renderOverview(); renderActions();
+    currentService = prevService;
+    renderDrawerHead(); syncServiceSelect(); renderOverview(); renderActions();
   } catch (_) {}
   loadApps();
 }
@@ -986,8 +1100,9 @@ let activeTerm = null;      // 当前已连接的终端实例（全局唯一）
  * 创建终端实例。
  * @param {string} p DOM id 前缀，对应 `${p}Dot|State|Screen|Input|Toggle|Interrupt|Clear`
  * @param {() => (number|null)} getAppId 目标应用解析器（抽屉取 current，文件页取 fmCurrentAppId）
+ * @param {() => (string|null)} [getService] 目标服务解析器（多容器应用）
  */
-function createTerminal(p, getAppId) {
+function createTerminal(p, getAppId, getService) {
   const q = (suffix) => document.getElementById(p + suffix);
   let sock = null;  // 当前 WebSocket
   let dec = null;   // 流式 UTF-8 解码器（跨分片保留半个多字节字符）
@@ -1026,7 +1141,9 @@ function createTerminal(p, getAppId) {
     const appId = getAppId();
     if (!appId) return;
     if (activeTerm && activeTerm !== term) activeTerm.stop(); // 同一时间只保留一个容器会话
-    const s = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/apps/${appId}/shell`);
+    const service = getService ? getService() : null;
+    const svcQ = service ? `?service=${encodeURIComponent(service)}` : "";
+    const s = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/apps/${appId}/shell${svcQ}`);
     sock = s;
     dec = new TextDecoder("utf-8");
     activeTerm = term;
@@ -1044,7 +1161,7 @@ function createTerminal(p, getAppId) {
     s.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch (_) { return; }
-      if (m.type === "open") append(`—— 已连接容器 ${m.container} ——\n`);
+      if (m.type === "open") append(`—— 已连接服务 ${m.service || "default"} · 容器 ${m.container} ——\n`);
       else if (m.type === "output") {
         const bytes = Uint8Array.from(atob(m.data), (c) => c.charCodeAt(0));
         const text = dec.decode(bytes, { stream: true });
@@ -1085,13 +1202,14 @@ function createTerminal(p, getAppId) {
 }
 
 // 抽屉「终端」tab 实例 + 「项目文件管理」页实例
-const drawerTerm = createTerminal("sh", () => (current ? current.id : null));
+const drawerTerm = createTerminal("sh", () => (current ? current.id : null), () => currentService);
 const filesTerm = createTerminal("fmSh", () => fmCurrentAppId);
 
 /* ---------------- 实时日志（WebSocket） ---------------- */
 function wsUrl(appId) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${location.host}/ws/apps/${appId}/logs?tail=200`;
+  const svc = currentService ? `&service=${encodeURIComponent(currentService)}` : "";
+  return `${proto}://${location.host}/ws/apps/${appId}/logs?tail=200${svc}`;
 }
 
 function appendLog(line, cls = "") {
@@ -1111,7 +1229,7 @@ function startWs() {
   ws.onopen = () => { $("#wsDot").classList.add("on"); $("#wsState").textContent = "已连接"; $("#wsToggle").textContent = "断开"; };
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
-    if (m.type === "open") appendLog(`—— 已连接容器 ${m.container} ——`);
+    if (m.type === "open") appendLog(`—— 已连接服务 ${m.service || "default"} · 容器 ${m.container} ——`);
     else if (m.type === "log") appendLog(m.line);
     else if (m.type === "eof") { appendLog(`—— ${m.message} ——`); stopWs(); $("#wsState").textContent = "容器已停止"; }
     else if (m.type === "error") { appendLog("错误：" + m.message, "err"); stopWs(); $("#wsState").textContent = m.message; }
@@ -1174,9 +1292,12 @@ function drawChart(rows) {
 async function loadMetrics() {
   if (!current) return;
   try {
-    const rows = await api(`/apps/${current.id}/metrics?limit=120`);
+    const svc = currentService ? `&service=${encodeURIComponent(currentService)}` : "";
+    const rows = await api(`/apps/${current.id}/metrics?limit=120${svc}`);
     drawChart(rows);
-    $("#metricsHint").textContent = rows.length ? `${rows.length} 个采样点（每 5s 一次）` : "";
+    $("#metricsHint").textContent = rows.length
+      ? `${currentService || "公开服务"} · ${rows.length} 个采样点（每 ${5}s 一次）`
+      : "";
   } catch (_) {}
 }
 
@@ -1403,7 +1524,10 @@ async function runWizard() {
     });
     if (dep.build_status === "failed") throw new Error("镜像构建失败");
     logln("  镜像构建成功：" + dep.image_tag);
-    if (dep.port_notice) { logln("  ⚙ " + dep.port_notice); toast(dep.port_notice); }
+    if (dep.port_notice) {
+      logln("  ⚙ " + dep.port_notice);
+      toast(dep.port_notice.length > 120 ? "已按 compose / 自动识别配置构建，详见构建日志" : dep.port_notice);
+    }
 
     const logs = await api(`/apps/${app.id}/build/logs`);
     logs.slice(-12).forEach((r) => logln("    " + r.log_line));
@@ -1946,6 +2070,12 @@ function fmBind(inst) {
 
 const fmEl = (inst, name) => inst.root.querySelector(`[data-fm="${name}"]`);
 
+/* 容器目标才需要服务名；源码目录与具体服务无关 */
+function fmService(inst) {
+  if (!inst || inst.target !== "container") return null;
+  return inst.ctx.getService ? inst.ctx.getService() : null;
+}
+
 function fmTargetLabel(inst, target) {
   const state = inst.targets[target];
   return (state && state.label) || FM_TARGET_LABEL[target] || target;
@@ -1963,6 +2093,8 @@ async function fmLoad(inst) {
   inst.loading = true;
   fmEl(inst, "list").innerHTML = '<div class="empty-inline">加载中…</div>';
   const q = new URLSearchParams({ target: inst.target, path: inst.path || "" });
+  const svc = fmService(inst);
+  if (svc) q.set("service", svc);
   try {
     const data = await api(`/apps/${appId}/files?${q.toString()}`);
     inst.entries = data.entries || [];
@@ -2096,6 +2228,8 @@ function fmEnter(inst, path) {
 
 function fmOpUrl(inst, path) {
   const q = new URLSearchParams({ target: inst.target, path: path || "" });
+  const svc = fmService(inst);
+  if (svc) q.set("service", svc);
   return `${API}/apps/${inst.ctx.getAppId()}/files/download?${q.toString()}`;
 }
 
@@ -2115,7 +2249,7 @@ async function fmFileOp(inst, path, op, newName) {
   try {
     const r = await api(`/apps/${inst.ctx.getAppId()}/files`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: inst.target, path, op, new_name: newName || null }),
+      body: JSON.stringify({ target: inst.target, path, op, new_name: newName || null, service: fmService(inst) }),
     });
     toast(r.message || "操作完成", "ok");
     fmLoad(inst);
@@ -2148,6 +2282,8 @@ async function fmUpload(inst, files) {
   const fd = new FormData();
   fd.append("target", inst.target);
   fd.append("path", inst.path || "");
+  const svc = fmService(inst);
+  if (svc) fd.append("service", svc);
   files.forEach((f) => fd.append("files", f));
   toast(`正在上传 ${files.length} 个文件…`);
   try {
@@ -2162,6 +2298,8 @@ async function fmUpload(inst, files) {
 async function fmEdit(inst, entry) {
   try {
     const q = new URLSearchParams({ target: inst.target, path: entry.path });
+    const svc = fmService(inst);
+    if (svc) q.set("service", svc);
     const data = await api(`/apps/${inst.ctx.getAppId()}/files/content?${q.toString()}`);
     if (!data.is_text) {
       toast("该文件不是文本文件，无法在线编辑，请下载后修改", "err");
@@ -2205,7 +2343,10 @@ async function fmRebuild(inst) {
 /* 页面版当前项目：模块级变量，由顶部项目上下文栏与选择浮层共同维护 */
 let fmCurrentAppId = null;
 const fmPageCtx = { getAppId: () => fmCurrentAppId };
-const fmDrawerCtx = { getAppId: () => (current ? current.id : null) };
+const fmDrawerCtx = {
+  getAppId: () => (current ? current.id : null),
+  getService: () => currentService,
+};
 
 function fmAppSummary(a) {
   const src = a.source_type === "git" ? "Git 源码" : "上传包";
@@ -2333,7 +2474,7 @@ async function saveEditor() {
   try {
     const r = await api(`/apps/${inst.ctx.getAppId()}/files/content`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: inst.target, path, content: $("#editorText").value }),
+      body: JSON.stringify({ target: inst.target, path, content: $("#editorText").value, service: fmService(inst) }),
     });
     toast(r.message || "文件已保存", "ok");
     closeEditor();
@@ -2343,6 +2484,365 @@ async function saveEditor() {
   } finally {
     btn.disabled = false;
   }
+}
+
+/* ---------------- AI Markdown 渲染（无外部依赖，先转义再解析） ---------------- */
+function aiInlineMarkdown(text) {
+  let s = text;
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, label, url) => {
+    const safe = /^https?:\/\//i.test(url) || /^\/(?!\/)/.test(url);
+    return safe
+      ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
+      : all;
+  });
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  return s;
+}
+
+function aiTableSeparator(line) {
+  const text = String(line || "").trim();
+  if (!text || !text.includes("-")) return false;
+  const cells = text.replace(/^\|/, "").replace(/\|$/, "").split("|");
+  return cells.length > 0 && cells.every((cell) => /^\s*:?-{2,}:?\s*$/.test(cell));
+}
+
+function aiSplitRow(line) {
+  let text = String(line || "").trim();
+  if (text.startsWith("|")) text = text.slice(1);
+  if (text.endsWith("|")) text = text.slice(0, -1);
+  return text.split("|").map((cell) => cell.trim());
+}
+
+function aiIsBlockStart(line, nextLine) {
+  const text = String(line || "").trim();
+  if (!text) return true;
+  if (/^#{1,6}\s+/.test(text)) return true;
+  if (/^>\s?/.test(text) || /^&gt;\s?/.test(text)) return true;
+  if (/^[-*+]\s+/.test(text)) return true;
+  if (/^\d+\.\s+/.test(text)) return true;
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(text)) return true;
+  if (/^\u0000MD\d+\u0000$/.test(text)) return true;
+  if (text.includes("|") && aiTableSeparator(nextLine)) return true;
+  return false;
+}
+
+function renderAiMarkdown(text) {
+  const tokens = [];
+  const stash = (html) => {
+    const key = `\u0000MD${tokens.length}\u0000`;
+    tokens.push(html);
+    return key;
+  };
+
+  let source = String(text ?? "").replace(/\r\n?/g, "\n");
+  // 围栏代码块：自带语言 class，内容单独转义
+  source = source.replace(/^```([^\n`]*)\n([\s\S]*?)\n?```[ \t]*$/gm, (_all, lang, code) => {
+    const language = String(lang || "").trim();
+    const cls = language ? ` class="language-${esc(language)}"` : "";
+    return stash(`<pre class="ai-code"><code${cls}>${esc(code.replace(/\n$/, ""))}</code></pre>`);
+  });
+  // 行内代码：先占位，避免内部 * / _ 等被当作强调
+  source = source.replace(/`([^`\n]+)`/g, (_all, code) => stash(`<code>${esc(code)}</code>`));
+  source = esc(source);
+
+  const lines = source.split("\n");
+  const out = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    if (!line) {
+      i += 1;
+      continue;
+    }
+    if (/^\u0000MD\d+\u0000$/.test(line)) {
+      out.push(line);
+      i += 1;
+      continue;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      out.push("<hr>");
+      i += 1;
+      continue;
+    }
+
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      const level = Math.min(heading[1].length + 2, 6);
+      out.push(`<h${level}>${aiInlineMarkdown(heading[2].trim())}</h${level}>`);
+      i += 1;
+      continue;
+    }
+
+    if (line.includes("|") && i + 1 < lines.length && aiTableSeparator(lines[i + 1])) {
+      const header = aiSplitRow(lines[i]);
+      const aligns = aiSplitRow(lines[i + 1]).map((cell) =>
+        /^:-+:$/.test(cell.replace(/\s/g, ""))
+          ? "center"
+          : /-+:$/.test(cell.replace(/\s/g, ""))
+            ? "right"
+            : "left",
+      );
+      i += 2;
+      const rows = [];
+      while (i < lines.length) {
+        const row = lines[i].trim();
+        if (!row || !row.includes("|")) break;
+        rows.push(aiSplitRow(lines[i]));
+        i += 1;
+      }
+      const head = header
+        .map(
+          (cell, idx) =>
+            `<th style="text-align:${aligns[idx] || "left"}">${aiInlineMarkdown(cell)}</th>`,
+        )
+        .join("");
+      const body = rows
+        .map(
+          (row) =>
+            `<tr>${header
+              .map(
+                (_ignored, idx) =>
+                  `<td style="text-align:${aligns[idx] || "left"}">${aiInlineMarkdown(
+                    row[idx] || "",
+                  )}</td>`,
+              )
+              .join("")}</tr>`,
+        )
+        .join("");
+      out.push(
+        `<div class="ai-table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`,
+      );
+      continue;
+    }
+
+    if (/^>\s?/.test(line) || /^&gt;\s?/.test(line)) {
+      const quoted = [];
+      while (
+        i < lines.length &&
+        (/^>\s?/.test(lines[i].trim()) || /^&gt;\s?/.test(lines[i].trim()))
+      ) {
+        quoted.push(lines[i].trim().replace(/^(?:>|&gt;)\s?/, ""));
+        i += 1;
+      }
+      out.push(`<blockquote>${quoted.map(aiInlineMarkdown).join("<br>")}</blockquote>`);
+      continue;
+    }
+
+    if (/^[-*+]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*+]\s+/, ""));
+        i += 1;
+      }
+      out.push(`<ul>${items.map((item) => `<li>${aiInlineMarkdown(item)}</li>`).join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ""));
+        i += 1;
+      }
+      out.push(`<ol>${items.map((item) => `<li>${aiInlineMarkdown(item)}</li>`).join("")}</ol>`);
+      continue;
+    }
+
+    const paragraph = [];
+    while (i < lines.length) {
+      const current = lines[i].trim();
+      if (!current) break;
+      if (paragraph.length && aiIsBlockStart(current, lines[i + 1])) break;
+      paragraph.push(current);
+      i += 1;
+    }
+    out.push(`<p>${paragraph.map(aiInlineMarkdown).join("<br>")}</p>`);
+  }
+
+  return out
+    .join("")
+    .replace(/\u0000MD(\d+)\u0000/g, (_all, idx) => tokens[Number(idx)] ?? "");
+}
+
+/* ---------------- 视图：AI 运行分析 ---------------- */
+let aiMessages = [];
+let aiBusy = false;
+let aiHealthState = null;
+let aiHealthLoading = false;
+
+const AI_EMPTY_HINT = "选择分析范围后提问，AI 会基于当前平台快照给出只读分析与建议。";
+
+function renderAiView() {
+  renderAiAppOptions();
+  loadAiHealth();
+  renderAiMessages();
+}
+
+function renderAiAppOptions() {
+  const sel = $("#aiApp");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML =
+    '<option value="">全平台</option>' +
+    apps
+      .map((a) => {
+        const extra = a.status === "running" ? "" : ` · ${STATUS_TEXT[a.status] || a.status}`;
+        return `<option value="${a.id}">${esc(a.name + extra)}</option>`;
+      })
+      .join("");
+  sel.value = apps.some((a) => String(a.id) === prev) ? prev : "";
+}
+
+function aiReady() {
+  return !!(aiHealthState && aiHealthState.enabled && aiHealthState.configured);
+}
+
+function updateAiControls() {
+  const ready = aiReady();
+  const input = $("#aiInput");
+  const send = $("#aiSend");
+  if (!input || !send) return;
+  input.disabled = !ready || aiBusy;
+  send.disabled = !ready || aiBusy;
+  const scope = $("#aiApp");
+  const clear = $("#aiClear");
+  if (scope) scope.disabled = aiBusy;
+  if (clear) clear.disabled = aiBusy;
+  $$("#aiSuggest .ai-chip").forEach((btn) => (btn.disabled = !ready || aiBusy));
+  if (ready) {
+    input.placeholder = "例如：哪些应用需要优先处理？为什么？";
+  } else {
+    input.placeholder = (aiHealthState && aiHealthState.hint) || "AI 未启用，请在后端 .env 中配置 AI_* 后重启";
+  }
+}
+
+async function loadAiHealth(force = false) {
+  if (aiHealthLoading || (aiHealthState && !force)) {
+    updateAiControls();
+    return;
+  }
+  aiHealthLoading = true;
+  try {
+    aiHealthState = await api("/ai/health");
+  } catch (e) {
+    aiHealthState = { enabled: false, configured: false, hint: "AI 配置检查失败：" + e.message };
+  } finally {
+    aiHealthLoading = false;
+  }
+  const hint = $("#aiHealth");
+  if (hint) {
+    const h = aiHealthState || {};
+    if (!h.enabled) hint.textContent = h.hint || "AI 未开启";
+    else if (!h.configured) hint.textContent = h.hint || "AI 参数不完整";
+    else hint.textContent = `已就绪 · ${h.model || "默认模型"} · 每分钟最多 ${h.rate_limit_per_min || "不限"} 次`;
+    hint.classList.toggle("warn", !(h.enabled && h.configured));
+  }
+  updateAiControls();
+  renderAiMessages();
+}
+
+function aiResultMeta(result) {
+  const bits = [];
+  if (result.model) bits.push(result.model);
+  if (result.elapsed_ms != null) bits.push(`${(result.elapsed_ms / 1000).toFixed(1)}s`);
+  const summary = result.context_summary || {};
+  if (summary.apps_total != null) bits.push(`${summary.apps_total} 个应用`);
+  if (summary.open_alerts != null) bits.push(`${summary.open_alerts} 条未消除告警`);
+  if (summary.target_app && summary.target_app.name) bits.push(`范围：${summary.target_app.name}`);
+  return bits.join(" · ");
+}
+
+function renderAiMessages() {
+  const box = $("#aiChat");
+  if (!box) return;
+  if (!aiMessages.length && !aiBusy) {
+    const hint = aiReady()
+      ? AI_EMPTY_HINT
+      : (aiHealthState && aiHealthState.hint) || "AI 未启用，请在后端 .env 中配置 AI_* 后重启";
+    box.innerHTML = `<div class="ai-empty"><span class="ai-empty-icon">AI</span><p>${esc(hint)}</p></div>`;
+    return;
+  }
+  const rows = aiMessages.map((m) => {
+    const role = m.role === "user" ? "user" : "assistant";
+    const error = m.error ? " error" : "";
+    const meta = m.meta ? `<div class="ai-meta">${esc(m.meta)}</div>` : "";
+    const markdown = role === "assistant" && !m.error;
+    const body = markdown ? renderAiMarkdown(m.content) : esc(m.content);
+    const cls = markdown ? "ai-text md" : "ai-text plain";
+    return `<div class="ai-msg ${role}${error}">
+      <div class="ai-role">${role === "user" ? "你" : "AI"}</div>
+      <div class="ai-bubble"><div class="${cls}">${body}</div>${meta}</div>
+    </div>`;
+  });
+  if (aiBusy) {
+    rows.push(`<div class="ai-msg assistant">
+      <div class="ai-role">AI</div>
+      <div class="ai-bubble ai-thinking"><span></span><span></span><span></span></div>
+    </div>`);
+  }
+  box.innerHTML = rows.join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+async function callAi(kind, question) {
+  if (aiBusy) return;
+  if (!aiReady()) {
+    toast((aiHealthState && aiHealthState.hint) || "AI 未启用", "err");
+    return;
+  }
+  const sel = $("#aiApp");
+  const appId = sel && sel.value ? parseInt(sel.value, 10) : null;
+  const history = aiMessages
+    .filter((m) => !m.error)
+    .slice(-8)
+    .map((m) => ({ role: m.role, content: m.content }));
+
+  aiMessages.push({ role: "user", content: question });
+  aiBusy = true;
+  $("#aiInput").value = "";
+  updateAiControls();
+  renderAiMessages();
+
+  try {
+    let result;
+    if (kind === "analyze") {
+      result = await api("/ai/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: appId }),
+      });
+    } else {
+      result = await api("/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: question, app_id: appId, history }),
+      });
+    }
+    aiMessages.push({
+      role: "assistant",
+      content: result.answer || "AI 未返回内容",
+      meta: aiResultMeta(result),
+    });
+  } catch (e) {
+    aiMessages.push({ role: "assistant", error: true, content: "请求失败：" + e.message });
+  } finally {
+    aiBusy = false;
+    updateAiControls();
+    renderAiMessages();
+  }
+}
+
+function aiAnalyze() {
+  const sel = $("#aiApp");
+  const scoped = sel && sel.value;
+  callAi("analyze", scoped ? "请分析当前应用的运行状态" : "请总结当前平台运行状态");
+}
+
+function aiAsk(question) {
+  callAi("chat", question);
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -2355,6 +2855,7 @@ function bindEvents() {
     if (activeView === "alerts") loadAlerts();
     if (activeView === "audit") loadAuditLogs();
     if (activeView === "files") renderFilePage(true);
+    if (activeView === "ai") { loadAiHealth(true); renderAiAppOptions(); }
     if (activeView === "users" && isAdmin()) loadUsers();
     toast("已刷新");
   };
@@ -2504,6 +3005,13 @@ function bindEvents() {
     if (b) onCardAction(current.id, b.dataset.dact);
   });
 
+  // 详情抽屉：切换服务 / 单服务重启
+  $("#drawerService").onchange = (e) => onServiceChange(e.target.value);
+  $("#overviewInfo").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-svc-restart]");
+    if (b) restartService(b.dataset.svcRestart);
+  });
+
   // 告警中心事件
   $("#alertStatusFilter").onchange = $("#alertLevelFilter").onchange = loadAlerts;
   $("#alertsBody").addEventListener("click", (e) => {
@@ -2518,6 +3026,35 @@ function bindEvents() {
     renderAuditLogs();
   });
   $("#auditActionFilter").onchange = loadAuditLogs;
+
+  // AI 运行分析
+  $("#aiForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $("#aiInput").value.trim();
+    if (text) aiAsk(text);
+  });
+  $("#aiInput").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    const text = $("#aiInput").value.trim();
+    if (text) aiAsk(text);
+  });
+  $("#aiSuggest").addEventListener("click", (e) => {
+    const btn = e.target.closest("button.ai-chip");
+    if (!btn || btn.disabled) return;
+    if (btn.dataset.aiAction === "analyze") aiAnalyze();
+    else if (btn.dataset.aiPrompt) aiAsk(btn.dataset.aiPrompt);
+  });
+  $("#aiClear").onclick = () => {
+    aiMessages = [];
+    renderAiMessages();
+  };
+  $("#aiApp").onchange = () => {
+    if (!aiMessages.length) return;
+    aiMessages = [];
+    renderAiMessages();
+    toast("已切换分析范围");
+  };
 
   // 应用配置（环境变量 / 启动命令）
   $("#cfgSaveBtn").onclick = saveAppConfig;

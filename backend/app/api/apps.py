@@ -26,6 +26,7 @@ from app.schemas.app_schema import (
     GitSourceIn,
     MetricOut,
     RouteOut,
+    ServiceOut,
 )
 from app.services import app_service, audit_service, demo_service, metrics_service, watchdog_service
 from app.services.app_service import AppError, AppNotFound
@@ -228,14 +229,80 @@ def delete_app(
     db.commit()
 
 
+@router.get(
+    "/{app_id}/services",
+    response_model=list[ServiceOut],
+    summary="应用内服务列表（多容器 compose）",
+)
+def list_app_services(
+    app_id: int, user: User | None = Depends(require_user), db: Session = Depends(get_db)
+) -> list:
+    try:
+        app = app_service.get_app(db, app_id, user)
+    except AppError as exc:
+        raise _handle(exc) from exc
+    return app.services
+
+
+@router.post(
+    "/{app_id}/rollback",
+    response_model=AppOut,
+    summary="回滚到上一个蓝绿版本",
+)
+def rollback_app(
+    app_id: int,
+    request: Request,
+    user: User | None = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        app = app_service.rollback_app(db, app_id, user)
+    except AppError as exc:
+        raise _handle(exc) from exc
+    _log_action(
+        db,
+        request,
+        user,
+        "app.rollback",
+        app,
+        detail={"active_slot": app.active_slot, "previous_slot": app.previous_slot},
+    )
+    return app
+
+
+@router.post(
+    "/{app_id}/services/{service_name}/restart",
+    response_model=AppOut,
+    summary="重启应用内的单个服务",
+)
+def restart_app_service(
+    app_id: int,
+    service_name: str,
+    request: Request,
+    user: User | None = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        app = app_service.restart_service(db, app_id, service_name, user)
+    except AppError as exc:
+        raise _handle(exc) from exc
+    _log_action(
+        db, request, user, "app.service.restart", app, detail={"service": service_name}
+    )
+    return app
+
+
 @router.get("/{app_id}/runtime", summary="容器实时状态与资源占用")
 def app_runtime(
-    app_id: int, user: User | None = Depends(require_user), db: Session = Depends(get_db)
+    app_id: int,
+    service: str | None = None,
+    user: User | None = Depends(require_user),
+    db: Session = Depends(get_db),
 ) -> dict:
     try:
-        result = app_service.app_runtime(db, app_id, user)
+        result = app_service.app_runtime(db, app_id, user, service=service)
     except AppError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise _handle(exc) from exc
     container = result["container"]
     result["container"] = ContainerInfo(**vars(container)) if container else None
     return result
@@ -349,7 +416,7 @@ def upload_source_demo(
 @router.post(
     "/{app_id}/build",
     response_model=BuildResultOut,
-    summary="构建镜像（容器端口由上传包自动识别）",
+    summary="构建镜像（支持单服务 compose，自动识别端口）",
 )
 def build_app(
     app_id: int,
@@ -407,6 +474,20 @@ def get_app_route(
 
 
 @router.get(
+    "/{app_id}/routes",
+    response_model=list[RouteOut],
+    summary="查询应用全部公开服务路由",
+)
+def list_app_routes(
+    app_id: int, user: User | None = Depends(require_user), db: Session = Depends(get_db)
+):
+    try:
+        return app_service.list_routes(db, app_id, user)
+    except AppError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
     "/{app_id}/metrics",
     response_model=list[MetricOut],
     summary="查询应用资源曲线（最近 N 条采样，按时间升序）",
@@ -414,6 +495,7 @@ def get_app_route(
 def get_app_metrics(
     app_id: int,
     limit: int = 120,
+    service: str | None = None,
     user: User | None = Depends(require_user),
     db: Session = Depends(get_db),
 ):
@@ -421,4 +503,7 @@ def get_app_metrics(
         app_service.get_app(db, app_id, user)
     except AppError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return metrics_service.list_metrics(db, app_id, limit=limit)
+    try:
+        return metrics_service.list_metrics(db, app_id, service=service, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.models import App
+from app.models.models import App, AppService
 
 # M8：并发部署时，多个应用会同时"读库→选空闲端口"，而此刻彼此都尚未落库，
 # 于是选到同一端口，容器 start 时报 "port is already allocated"。
@@ -29,9 +29,25 @@ def _is_occupied(port: int) -> bool:
 
 
 def _used_by_apps(db: Session) -> set[int]:
-    """数据库中已被应用占用的端口。"""
-    rows = db.execute(select(App.host_port).where(App.host_port.is_not(None))).scalars().all()
-    return {int(p) for p in rows if p is not None}
+    """数据库中已被应用占用的端口（含多公开服务与回滚槽位端口）。"""
+    used: set[int] = set()
+    for value in db.execute(
+        select(App.host_port).where(App.host_port.is_not(None))
+    ).scalars():
+        if value is not None:
+            used.add(int(value))
+    rows = db.execute(
+        select(AppService.host_port, AppService.previous_host_port).where(
+            (AppService.host_port.is_not(None))
+            | (AppService.previous_host_port.is_not(None))
+        )
+    ).all()
+    for current, previous in rows:
+        if current is not None:
+            used.add(int(current))
+        if previous is not None:
+            used.add(int(previous))
+    return used
 
 
 def allocate(db: Session) -> int:
@@ -66,4 +82,18 @@ def reserve_for_app(db: Session, app: App, *, force_new: bool = False) -> int:
         app.host_port = port
         db.commit()
         db.refresh(app)
+        return port
+
+
+def reserve_for_service(
+    db: Session, service: AppService, *, force_new: bool = False
+) -> int:
+    """为单个公开服务预留宿主端口（多公开服务 / 蓝绿切换使用）。"""
+    with _ALLOC_LOCK:
+        if service.host_port and not force_new:
+            return service.host_port
+        port = allocate(db)
+        service.host_port = port
+        db.commit()
+        db.refresh(service)
         return port

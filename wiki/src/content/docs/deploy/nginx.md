@@ -13,14 +13,9 @@ PocketPaaS 本身不需要手工写应用路由，但**控制台自身的域名*
 | 外层（宝塔 nginx） | `deploy/baota-front.conf` | 宿主 `:80` | 接收所有公网请求，把 `*.beta.域名` 与控制台域名整体转给内层 |
 | 内层（平台 nginx） | `deploy/console.conf` + 平台自动生成的 `paas-{id}.conf` | 容器 `:8080` | 按 `Host` 分流：控制台 → `127.0.0.1:8000`，应用 → `127.0.0.1:2000x` |
 
-```text
-浏览器
-  │  Host: app.jinyuttsrz.top
-  ▼
-宝塔 nginx :80 ──透传 Host──▶ 平台内层 nginx :8080
-                                   ├─ server_name app.jinyuttsrz.top → proxy_pass 127.0.0.1:8000
-                                   └─ server_name demo.beta.jinyuttsrz.top → proxy_pass 127.0.0.1:2000x
-```
+![双层 Nginx 接入链路](/images/diagrams/nginx.png)
+
+<div class="diagram-caption">图　双层 Nginx 接入链路</div>
 
 :::note[为什么外层必须透传 Host]
 内层 nginx 靠 `Host` 区分控制台与各个应用。若外层没有 `proxy_set_header Host $host;`，

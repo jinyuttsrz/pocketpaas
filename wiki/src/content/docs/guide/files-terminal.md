@@ -12,6 +12,9 @@ description: 双通道文件管理（宿主源码 / 运行中容器）与容器 
 | `source` | 宿主源码目录 `workspace/{app_id}/src` | 修改下次构建要用的源码 |
 | `container` | 运行中容器的文件系统 | 查看运行态配置、临时改文件排障 |
 
+多容器应用在详情抽屉顶部选择服务后，`container` 通道指向该服务的容器；
+「项目文件管理」页没有服务选择器，默认使用公开服务。接口层对应 `service` 参数。
+
 :::note[两者互不影响]
 改 `source` 不会自动同步进容器；改 `container` 里的文件也不会回写源码目录。
 构建使用的始终是 `source`。
@@ -46,8 +49,8 @@ description: 双通道文件管理（宿主源码 / 运行中容器）与容器 
 
 ### 两个入口
 
-- 应用详情抽屉 → 「终端」tab
-- 「项目文件管理」页 → 终端卡片
+- 应用详情抽屉 → 「终端」tab（多容器应用随服务选择器切换目标服务）
+- 「项目文件管理」页 → 终端卡片（默认公开服务）
 
 ### 全局单会话互斥
 
@@ -74,11 +77,4 @@ description: 双通道文件管理（宿主源码 / 运行中容器）与容器 
 
 ## 相关接口
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/apps/{app_id}/files` | 浏览目录（`target=source\|container`） |
-| GET / PUT | `/api/apps/{app_id}/files/content` | 读取 / 保存文本文件 |
-| POST | `/api/apps/{app_id}/files/upload` | 上传文件（多选） |
-| POST | `/api/apps/{app_id}/files` | 新建 / 重命名 / 删除（`op=mkdir\|rename\|delete`） |
-| GET | `/api/apps/{app_id}/files/download` | 下载文件或目录打包 zip |
-| WS | `/ws/apps/{app_id}/shell` | 容器 Web 终端 |
+完整参数与权限说明见[文件管理](/reference/api/files/)与 [WebSocket](/reference/api/websocket/) 两个分册。

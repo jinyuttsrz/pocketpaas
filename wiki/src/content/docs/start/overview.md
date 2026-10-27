@@ -67,7 +67,7 @@ F:\test/                        仓库根目录
 │   ├── requirements.txt        依赖清单
 │   ├── .env / .env.example     本地开发配置
 │   └── .env.prod.example       线上配置模板（复制为 .env.prod）
-├── demo/                       4 个内置示例代码包
+├── demo/                       5 个内置示例代码包
 ├── deploy/                     双层 Nginx 配置：console.conf / baota-front.conf
 ├── docker-compose.yml          线上编排（单服务、host 网络）
 ├── wiki/                       本文档站（Astro + Starlight）
@@ -79,7 +79,7 @@ F:\test/                        仓库根目录
 
 ## 内置示例包
 
-`demo/` 下提供 4 个示例包，服务于控制台「模板与指南」页的一键创建演示应用：
+`demo/` 下提供 5 个示例包，服务于控制台「模板与指南」页的一键创建演示应用：
 
 | 文件 | 内容 | 用途 |
 |---|---|---|
@@ -87,6 +87,7 @@ F:\test/                        仓库根目录
 | `python-demo.zip` | `python-demo/main.py` + `requirements.txt` | 体验 Python 应用交付 |
 | `node-demo.zip` | `package.json` + `server.js` | 体验 Node 应用交付 |
 | `custom-demo.zip` | `Dockerfile` + `index.html` | 体验「自带 Dockerfile」的自定义构建路径 |
+| `compose-demo.zip` | `web + api + worker` 多服务 compose | 体验多公开服务、内部 DNS、健康检查、命名卷与蓝绿回滚 |
 
 :::caution[示例包依赖挂载]
 平台镜像**不包含** `demo/` 目录。容器化部署时必须保留 `./demo:/demo:ro` 挂载，

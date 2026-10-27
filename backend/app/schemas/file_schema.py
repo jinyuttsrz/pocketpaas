@@ -61,6 +61,7 @@ class FileWriteIn(BaseModel):
     target: FileTarget
     path: str = Field(..., min_length=1, description="相对目标根目录的文件路径")
     content: str = Field(..., description="文件内容（UTF-8 文本）")
+    service: str | None = Field(None, description="容器目标对应的服务名（缺省取公开服务）")
 
 
 class FileOpIn(BaseModel):
@@ -70,6 +71,8 @@ class FileOpIn(BaseModel):
     path: str = Field("", description="相对目标根目录的路径（根目录为空串）")
     op: Literal["mkdir", "rename", "delete"]
     new_name: str | None = Field(None, max_length=255, description="重命名时的新名称")
+    service: str | None = Field(None, description="容器目标对应的服务名（缺省取公开服务）")
+
 
 
 class FileOpResultOut(BaseModel):

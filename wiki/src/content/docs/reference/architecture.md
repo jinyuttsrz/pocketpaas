@@ -5,35 +5,9 @@ description: 控制面与数据面的职责划分、四层结构、流量路径�
 
 ## 四层架构
 
-```text
-        浏览器            Git 平台（Webhook 推送）
-          │                        │
-          └───────────┬────────────┘
-                      ▼
-        ┌──────────────────────────────────┐
-        │   外层 Nginx（宝塔，listen :80）   │
-        │   deploy/baota-front.conf         │
-        └────────────────┬─────────────────┘
-                         │ 反向代理（透传 Host）
-                         ▼
-        ┌──────────────────────────────────┐
-        │   平台内层 Nginx（listen :8080）   │
-        │   deploy/console.conf             │
-        │   + paas-{id}.conf（应用子域名）   │
-        └───────┬──────────────────┬───────┘
-                │                  │
-     控制台 / API :8000             │  应用子域名 → 127.0.0.1:2000x
-                ▼                  ▼
-   ┌──────────────────────┐   ┌────────────────────────┐
-   │  PocketPaaS 控制面    │   │  应用容器（数据面）      │
-   │  FastAPI + 前端 SPA   │   │  用户镜像 / 端口 2000x   │
-   └──────────┬───────────┘   └────────────────────────┘
-              │  docker.sock（创建 / 构建 / 管理）
-              ▼
-   ┌──────────────────────┐
-   │   宿主 Docker Engine  │
-   └──────────────────────┘
-```
+![PocketPaaS 四层总体架构](/images/diagrams/arch.png)
+
+<div class="diagram-caption">图　PocketPaaS 四层总体架构</div>
 
 ## 控制面与数据面
 
@@ -56,6 +30,10 @@ description: 控制面与数据面的职责划分、四层结构、流量路径�
    - 控制台域名 → `127.0.0.1:8000`
    - 应用子域名 → `127.0.0.1:{分配的宿主端口}`
 
+![部署拓扑与流量路径](/images/diagrams/topology.png)
+
+<div class="diagram-caption">图　部署拓扑与流量路径</div>
+
 ## 本地 / 线上双模式
 
 由 `DEPLOY_MODE` 切换，代码层面不需要改动：
@@ -75,25 +53,29 @@ description: 控制面与数据面的职责划分、四层结构、流量路径�
 | `builder_service` | Dockerfile 生成与镜像构建 |
 | `docker_service` | 容器生命周期、日志流、exec |
 | `source_service` | zip / Git / 示例包源码接入 |
+| `compose_service` | 多服务 Docker Compose 解析、安全字段白名单与依赖排序 |
+| `compose_engine` | 逐服务构建、应用网络 / 命名卷、依赖启动、蓝绿槽位与多容器生命周期 |
 | `route_service` | 渲染 server 块、`nginx -t`、reload |
-| `metrics_service` | 应用与宿主指标采样 |
-| `watchdog_service` | HTTP 就绪探针与自愈重启 |
+| `metrics_service` | 应用服务级指标采样 |
+| `watchdog_service` | 服务级 HTTP 就绪探针与自愈重启 |
 | `alert_service` | 阈值告警规则与状态流转 |
 | `audit_service` | 操作审计记录 |
 | `auth_service` / `captcha_service` | 登录鉴权与图形验证码 |
 | `security_service` | 容器加固、Dockerfile 扫描、SSRF 防护 |
 | `file_service` | 双通道文件管理 |
 | `diagnose_service` | 一键诊断 8 项检查 |
+| `ai_service` | AI 只读运行分析、上下文脱敏与提示词注入防护 |
 | `webhook_service` | Webhook 签名校验与自动部署 |
 | `demo_service` | 内置示例包 |
 | `port_allocator` | 端口分配与竞态重试 |
 | `resource_service` | 宿主资源预校验 |
 
-## 数据表（9 张）
+## 数据表（10 张）
 
 | 表 | 用途 |
 |---|---|
 | `apps` | 应用主表 |
+| `app_services` | 应用内服务（多容器 compose 的运行时单元） |
 | `deployments` | 部署记录 |
 | `routes` | 路由表 |
 | `build_logs` | 构建日志 |

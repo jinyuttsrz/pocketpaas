@@ -114,6 +114,8 @@ class DeploymentOut(BaseModel):
     container_id: str | None
     container_name: str | None
     port: int | None
+    slot: str | None = None
+    strategy: str | None = None
     created_at: datetime
 
 
@@ -132,6 +134,7 @@ class RouteOut(BaseModel):
     app_id: int
     domain: str
     upstream_port: int
+    service_name: str | None = None
     ssl_enabled: bool
 
 
@@ -142,9 +145,30 @@ class MetricOut(BaseModel):
 
     id: int
     app_id: int
+    service_id: int | None = None
     cpu: float
     mem: float
     ts: datetime
+
+
+class ServiceOut(BaseModel):
+    """应用内单个服务的运行时信息。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    image: str | None = None
+    container_id: str | None = None
+    container_name: str | None = None
+    container_port: int | None = None
+    host_port: int | None = None
+    mem_limit: str = "256m"
+    cpu_quota: float = 1.0
+    status: str = "created"
+    is_public: bool = False
+    is_primary: bool = False
+    access_url: str | None = None
 
 
 class AppOut(BaseModel):
@@ -170,6 +194,9 @@ class AppOut(BaseModel):
     cpu_quota: float
     env: dict[str, str] = Field(default_factory=dict)
     command: str | None = None
+    services: list[ServiceOut] = Field(default_factory=list)
+    active_slot: str | None = None
+    previous_slot: str | None = None
     created_at: datetime
 
     @field_validator("env", mode="before")

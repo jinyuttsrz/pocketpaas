@@ -56,12 +56,18 @@ class App(Base):
     command: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Git Webhook：每个应用独立的 HMAC-SHA256 签名密钥（懒生成，可一键重置）
     webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 多容器发布槽位：v{deployment_id}（旧版单/多容器部署记为 blue）
+    active_slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    previous_slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     deployments: Mapped[list["Deployment"]] = relationship(
         back_populates="app", cascade="all, delete-orphan"
     )
     routes: Mapped[list["Route"]] = relationship(
+        back_populates="app", cascade="all, delete-orphan"
+    )
+    services: Mapped[list["AppService"]] = relationship(
         back_populates="app", cascade="all, delete-orphan"
     )
     owner: Mapped["User | None"] = relationship(back_populates="apps")
@@ -102,12 +108,100 @@ class Deployment(Base):
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mem_limit: Mapped[str | None] = mapped_column(String(16), nullable=True)
     cpu_quota: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 多容器发布：slot=blue/green，strategy=rolling/bluegreen/rollback
+    slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    strategy: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     app: Mapped["App"] = relationship(back_populates="deployments")
     build_logs: Mapped[list["BuildLog"]] = relationship(
         back_populates="deployment", cascade="all, delete-orphan"
     )
+
+
+class AppService(Base):
+    """应用内的单个服务（多容器 compose 的最小运行时单元）。
+
+    单容器应用也会有一条 name="default" 的服务记录：
+    - 对外公开的服务 is_public=True，host_port 指向平台分配的宿主端口；
+    - 内部服务（如数据库）is_public=False，不分配宿主端口，也不渲染路由。
+    """
+
+    __tablename__ = "app_services"
+    __table_args__ = (
+        UniqueConstraint("app_id", "name", name="uq_app_services_app_name"),
+        Index("ix_app_services_app_public", "app_id", "is_public"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    app_id: Mapped[int] = mapped_column(
+        ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    image: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    container_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    container_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    container_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    host_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mem_limit: Mapped[str] = mapped_column(String(16), default="256m")
+    cpu_quota: Mapped[float] = mapped_column(Float, default=1.0)
+    status: Mapped[str] = mapped_column(String(16), default="created")
+    is_public: Mapped[bool] = mapped_column(default=False)
+    # 蓝绿发布：当前 slot 与上一个 slot 的容器 / 端口，用于失败回退与一键回滚
+    previous_container_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_container_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    previous_host_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    previous_container_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    previous_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    previous_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    app: Mapped["App"] = relationship(back_populates="services")
+
+    @property
+    def is_primary(self) -> bool:
+        """主入口公开服务：宿主端口与应用对外端口一致。"""
+        app = self.app
+        return bool(
+            self.is_public
+            and app is not None
+            and self.host_port
+            and self.host_port == app.host_port
+        )
+
+    @property
+    def access_url(self) -> str | None:
+        """服务访问地址：主入口用应用域名，其他公开服务用独立子域名。"""
+        from app.core.config import settings
+
+        app = self.app
+        if not self.is_public or not self.host_port or app is None:
+            return None
+        if not settings.ENABLE_NGINX:
+            return f"http://localhost:{self.host_port}"
+
+        from app.services import route_service  # 延迟导入，避免模型层依赖服务层
+
+        domain = (
+            route_service.domain_for(app.subdomain)
+            if self.is_primary
+            else route_service.domain_for_service(app.subdomain, self.name)
+        )
+        https = bool(
+            settings.USE_HTTPS and settings.SSL_CERT_PATH and settings.SSL_KEY_PATH
+        )
+        scheme = "https" if https else "http"
+        default_port = 443 if https else 80
+        port = (
+            ""
+            if settings.NGINX_PUBLIC_PORT == default_port
+            else f":{settings.NGINX_PUBLIC_PORT}"
+        )
+        return f"{scheme}://{domain}{port}"
+
 
 
 class Route(Base):
@@ -119,6 +213,8 @@ class Route(Base):
     app_id: Mapped[int] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"))
     domain: Mapped[str] = mapped_column(String(255), nullable=False)
     upstream_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 多公开服务：路由归属的服务名；旧数据为 NULL（应用主入口）
+    service_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ssl_enabled: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -141,12 +237,19 @@ class BuildLog(Base):
 
 
 class Metric(Base):
-    """资源指标采样。"""
+    """资源指标采样。
+
+    `service_id` 指向应用内的具体服务：多容器 compose 逐服务采样，
+    单容器应用同样落到 default 服务上；历史数据该列为空（视为应用整体）。
+    """
 
     __tablename__ = "metrics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     app_id: Mapped[int] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"))
+    service_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_services.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     cpu: Mapped[float] = mapped_column(Float, default=0.0)
     mem: Mapped[float] = mapped_column(Float, default=0.0)
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

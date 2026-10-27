@@ -7,3 +7,4 @@ docker==7.1.0
 python-multipart==0.0.20
 websockets==14.1
 psutil==6.1.1
+PyYAML==6.0.2

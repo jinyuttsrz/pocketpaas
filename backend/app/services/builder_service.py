@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import settings
+from app.services import compose_service
 
 # 常见 Python 项目默认端口
 PYTHON_DEFAULT_PORT = 8000
@@ -40,10 +41,11 @@ def _pip_index_flag() -> str:
 class ProjectProfile:
     """识别结果。"""
 
-    project_type: str  # python / node / static / custom
+    project_type: str  # python / node / static / custom / compose
     has_dockerfile: bool
     default_port: int
     entry: str | None = None  # 推断出的入口模块（python: app.main:app 形式）
+    compose: compose_service.ComposePlan | None = None  # 单服务 compose 解析结果
 
 
 def _read_requirements(src: Path) -> str:
@@ -71,7 +73,7 @@ def _guess_python_entry(src: Path) -> str:
     return "app:app"
 
 
-def _is_platform_generated(dockerfile: Path) -> bool:
+def is_platform_generated(dockerfile: Path) -> bool:
     """判断 Dockerfile 是否由平台自动生成（首行带标记）。"""
     try:
         text = dockerfile.read_text(encoding="utf-8", errors="ignore")
@@ -129,6 +131,7 @@ class PortResolution:
 # 识别依据的中文说明：用于构建日志与前端提示，便于用户理解端口为何被改写
 PORT_SOURCE_LABELS = {
     "manifest": "上传包内的 paas.json 声明",
+    "compose": "docker-compose 的 ports / expose 声明",
     "dockerfile": "自带 Dockerfile 的 EXPOSE",
     "type_default": "项目类型默认端口",
 }
@@ -149,6 +152,13 @@ def resolve_container_port(src: Path, profile: ProjectProfile) -> PortResolution
     manifest_port = _port_from_manifest(src)
     if manifest_port:
         return PortResolution(manifest_port, "manifest")
+    if profile.compose is not None:
+        if profile.compose.is_multi:
+            public = profile.compose.public
+            if public and public.container_port:
+                return PortResolution(public.container_port, "compose")
+        elif profile.compose.container_port:
+            return PortResolution(profile.compose.container_port, "compose")
     if profile.project_type == "custom":
         port = _port_from_dockerfile(src)
         return PortResolution(port or PYTHON_DEFAULT_PORT,
@@ -158,10 +168,33 @@ def resolve_container_port(src: Path, profile: ProjectProfile) -> PortResolution
     return None
 
 
-def detect(src: Path) -> ProjectProfile:
-    """识别项目类型。"""
+def detect(src: Path, *, check_compose: bool = True) -> ProjectProfile:
+    """识别项目类型。
+
+    check_compose=False 用于 compose 构建上下文内部的类型识别，
+    避免把上下文里的 compose 文件再次当作入口。
+    """
     if not src.exists() or not src.is_dir():
         raise FileNotFoundError(f"源码目录不存在：{src}")
+
+    if check_compose:
+        compose_path = compose_service.find(src)
+        if compose_path is not None:
+            plan = compose_service.load(src, compose_path)
+            if plan.is_multi:
+                public = plan.public
+                return ProjectProfile(
+                    "compose",
+                    any(spec.build_dockerfile for spec in plan.services),
+                    (public.container_port if public else None) or PYTHON_DEFAULT_PORT,
+                    compose=plan,
+                )
+            return ProjectProfile(
+                "compose",
+                bool(plan.build_dockerfile),
+                plan.container_port or PYTHON_DEFAULT_PORT,
+                compose=plan,
+            )
 
     files = {p.name for p in src.iterdir()}
     dockerfile = src / "Dockerfile"
@@ -169,7 +202,7 @@ def detect(src: Path) -> ProjectProfile:
     # 用户自带的 Dockerfile → 复用（custom）；
     # 平台上一轮生成的（带标记）不算自带，需按最新模板重新生成，
     # 否则修正模板后重新构建不会生效。
-    if dockerfile.exists() and not _is_platform_generated(dockerfile):
+    if dockerfile.exists() and not is_platform_generated(dockerfile):
         return ProjectProfile("custom", True, PYTHON_DEFAULT_PORT)
 
     if "package.json" in files:

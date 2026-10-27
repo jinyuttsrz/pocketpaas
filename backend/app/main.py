@@ -10,11 +10,25 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import alerts, apps, audit, auth, console, diagnose, files, system, users, webhook, ws
+from app.api import (
+    ai,
+    alerts,
+    apps,
+    audit,
+    auth,
+    console,
+    diagnose,
+    files,
+    system,
+    users,
+    webhook,
+    ws,
+)
 from app.core.config import settings
 from app.core.database import init_db, SessionLocal
 from app.services import (
     alert_service,
+    app_service,
     auth_service,
     docker_service,
     host_metrics_service,
@@ -31,6 +45,8 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         auth_service.ensure_default_admin(db)
+        # 多容器改造：为历史应用补 default 服务记录
+        app_service.backfill_app_services(db)
     finally:
         db.close()
     # M7：确保内网隔离网桥存在（失败不阻塞启动，容器将降级默认网络）
@@ -54,6 +70,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
 app.include_router(apps.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
 app.include_router(diagnose.router, prefix="/api")

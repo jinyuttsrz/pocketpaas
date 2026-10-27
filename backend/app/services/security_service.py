@@ -130,19 +130,24 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def scan_dockerfile(src: Path) -> None:
+def scan_dockerfile(src: Path, dockerfile: str = "Dockerfile") -> None:
     """扫描源码目录内自带的 Dockerfile，命中危险指令即拒绝构建。
 
-    仅在用户自带 Dockerfile（custom 项目）时有意义；平台自动生成的
-    Dockerfile 天然安全。开关由 BLOCK_DANGEROUS_DOCKERFILE 控制。
+    compose 的 build.dockerfile 可能位于子目录，因此文件名可指定；
+    路径仍会被限制在源码目录 / 构建上下文内。
+    仅在用户自带 Dockerfile 时有意义；平台自动生成的天然安全。
     """
     if not settings.BLOCK_DANGEROUS_DOCKERFILE:
         return
-    dockerfile = src / "Dockerfile"
-    if not dockerfile.exists():
+
+    base = src.resolve()
+    path = (base / dockerfile).resolve()
+    if path != base and base not in path.parents:
+        raise SecurityError(f"Dockerfile 超出构建上下文：{dockerfile}")
+    if not path.exists():
         return
 
-    text = dockerfile.read_text(encoding="utf-8", errors="ignore")
+    text = path.read_text(encoding="utf-8", errors="ignore")
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
