@@ -423,6 +423,37 @@ def _endpoint() -> str:
     return f"{base}/chat/completions"
 
 
+def _upstream_message(body: str) -> str:
+    """从供应商错误体里提取可读信息（兼容 OpenAI 与 SiliconFlow 的字段）。"""
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return body[:200]
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            text = err.get("message") or err.get("type") or ""
+            if text:
+                return str(text)[:200]
+        if data.get("message"):
+            return str(data["message"])[:200]
+    return body[:200]
+
+
+def _http_hint(code: int, message: str) -> str:
+    """把供应商状态码翻译成可操作的提示，避免前端只看到一串原始 JSON。"""
+    tail = f"（{message}）" if message else ""
+    if code in (401, 403):
+        return f"AI 鉴权失败，请检查 AI_API_KEY 是否有效{tail}"
+    if code == 404:
+        return f"AI 接口或模型不存在，请检查 AI_BASE_URL 与 AI_MODEL{tail}"
+    if code == 429:
+        return f"AI 供应商限流或额度不足，请稍后重试{tail}"
+    if code >= 500:
+        return f"AI 供应商暂时异常，请稍后重试{tail}"
+    return f"AI 服务返回 HTTP {code}{tail}"
+
+
 def _complete(messages: list[dict]) -> dict:
     """调用 OpenAI 兼容 Chat Completions 接口（仅服务端持有 Key）。"""
     _require_config()
@@ -448,10 +479,24 @@ def _complete(messages: list[dict]) -> dict:
         with urllib.request.urlopen(request, timeout=float(settings.AI_TIMEOUT)) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as exc:
-        detail = (exc.read() or b"").decode("utf-8", "replace").strip()[:300]
-        raise AiUpstreamError(f"AI 服务返回 HTTP {exc.code}：{detail}") from exc
+        body = (exc.read() or b"").decode("utf-8", "replace").strip()
+        logger.warning(
+            "AI 调用失败：model=%s status=%s body=%s",
+            settings.AI_MODEL.strip(),
+            exc.code,
+            body[:400],
+        )
+        raise AiUpstreamError(_http_hint(exc.code, _upstream_message(body))) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise AiUpstreamError(f"AI 服务连接失败：{exc}") from exc
+        logger.warning(
+            "AI 服务连接失败：model=%s timeout=%ss err=%s",
+            settings.AI_MODEL.strip(),
+            settings.AI_TIMEOUT,
+            exc,
+        )
+        raise AiUpstreamError(
+            f"AI 服务连接失败（{settings.AI_TIMEOUT:g} 秒超时或网络不可达）：{exc}"
+        ) from exc
 
     try:
         data = json.loads(raw.decode("utf-8", "replace"))

@@ -86,6 +86,20 @@ app.mount(
 )
 
 
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    """静态资源强制协商缓存。
+
+    浏览器对 JS / CSS 有很强的启发式缓存，换了镜像仍可能拿到旧文件。
+    这里统一加 no-cache，让每次加载都回源校验（未变更则 304），
+    配合 index.html 上的 ?v= 版本号，避免“改了前端但页面没变”。
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 if __name__ == "__main__":
     import uvicorn
 

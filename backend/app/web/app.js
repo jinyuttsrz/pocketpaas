@@ -69,14 +69,35 @@ function gotoLogin() {
   location.href = "/login";
 }
 
+/* 把非 2xx 响应转成可读错误：
+   优先取 JSON 里的 detail，其次剥掉 nginx 错误页的 HTML 标签，
+   最后退回状态码——避免 HTTP/2 下 statusText 为空时只显示「请求失败：」。 */
+async function httpErrorText(res) {
+  let raw = "";
+  try { raw = await res.text(); } catch (_) { /* 读体失败按空处理 */ }
+  let detail = "";
+  try {
+    const body = JSON.parse(raw);
+    if (body && body.detail != null) {
+      detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    } else if (body && body.message) {
+      detail = String(body.message);
+    }
+  } catch (_) { /* 非 JSON，多为网关返回的 HTML 错误页 */ }
+  if (!detail) {
+    detail = raw
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return `HTTP ${res.status}：${detail ? detail.slice(0, 300) : "无响应内容"}`;
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(API + path, Object.assign({ credentials: "same-origin" }, opts));
   if (res.status === 401) { gotoLogin(); throw new Error("未登录或登录已过期"); }
-  if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch (_) {}
-    throw new Error(detail);
-  }
+  if (!res.ok) throw new Error(await httpErrorText(res));
   if (res.status === 204) return null;
   return res.json();
 }
@@ -1859,6 +1880,8 @@ async function onAlertAction(id, act) {
 }
 
 /* ---------------- 视图 8：审计日志 ---------------- */
+const AUDIT_ANSWER_PREVIEW = 4000; // 与后端 AUDIT_ANSWER_LIMIT 保持一致
+
 function fmtTime(ts) {
   if (!ts) return "—";
   const d = new Date(ts);
@@ -1914,7 +1937,7 @@ function renderAuditLogs() {
 
   const body = $("#auditBody");
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty-inline">暂无审计记录</div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="7"><div class="empty-inline">暂无审计记录</div></td></tr>`;
     return;
   }
   body.innerHTML = rows.map((r) => `<tr>
@@ -1924,7 +1947,79 @@ function renderAuditLogs() {
     <td>${r.target_name ? esc(r.target_name) : "—"}<div class="cell-sub">${esc(r.target_type)}${r.target_id != null ? " #" + r.target_id : ""}</div></td>
     <td>${esc(fmtDetail(r.detail))}</td>
     <td>${esc(r.client_ip || "—")}</td>
+    <td><button class="btn btn-ghost btn-sm" type="button" data-audit-id="${r.id}">详情</button></td>
   </tr>`).join("");
+}
+
+/* ---------------- 审计详情弹窗 ---------------- */
+function parseAuditDetail(raw) {
+  if (!raw) return {};
+  try {
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === "object" ? obj : { detail: raw };
+  } catch (_) { return { detail: raw }; }
+}
+
+function adValue(value) {
+  if (value == null || value === "") return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function openAuditDetail(id) {
+  const log = auditLogs.find((item) => item.id === id);
+  if (!log) return;
+  const detail = parseAuditDetail(log.detail);
+  $("#auditDetailTitle").textContent = log.action_label || log.action || "操作记录";
+
+  const meta = [
+    ["时间", fmtTime(log.ts)],
+    ["操作人", log.username || "—"],
+    ["动作", `${log.action_label || log.action}${log.action ? "（" + log.action + "）" : ""}`],
+    ["对象", [log.target_name, `${log.target_type}${log.target_id != null ? " #" + log.target_id : ""}`].filter(Boolean).join(" · ")],
+    ["来源 IP", log.client_ip || "—"],
+  ];
+  const metaHtml = `<div class="ad-meta">${meta
+    .map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`)
+    .join("")}</div>`;
+
+  let bodyHtml = metaHtml;
+  if (detail.question || detail.answer) {
+    const chips = [];
+    if (detail.model) chips.push(`模型 ${detail.model}`);
+    if (detail.scope_app) chips.push(`范围 ${detail.scope_app}`);
+    else if (detail.scope) chips.push(detail.scope === "admin" ? "范围 全平台" : "范围 本人应用");
+    if (detail.usage && detail.usage.total_tokens != null) {
+      chips.push(
+        `tokens ${detail.usage.input_tokens ?? "?"} 入 / ${detail.usage.output_tokens ?? "?"} 出 / ${detail.usage.total_tokens} 合计`,
+      );
+    }
+    if (detail.elapsed_ms != null) chips.push(`${(detail.elapsed_ms / 1000).toFixed(1)}s`);
+    bodyHtml += `<div class="ad-block">
+      <div class="ad-label">提问</div>
+      <div class="ad-text">${esc(detail.question || "—")}</div>
+    </div>
+    <div class="ad-block">
+      <div class="ad-label">输出</div>
+      <div class="ad-text md ai-text">${renderAiMarkdown(detail.answer || "—")}</div>
+      ${detail.truncated ? `<div class="ad-note">输出过长，仅保留前 ${AUDIT_ANSWER_PREVIEW} 字，完整内容请查看后端日志。</div>` : ""}
+    </div>`;
+    if (chips.length) bodyHtml += `<div class="ad-chips">${chips.map((c) => `<span class="ad-chip">${esc(c)}</span>`).join("")}</div>`;
+  } else {
+    const entries = Object.entries(detail);
+    bodyHtml += entries.length
+      ? `<table class="ad-kv"><tbody>${entries
+          .map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(adValue(v))}</td></tr>`)
+          .join("")}</tbody></table>`
+      : `<div class="empty-inline">该操作没有附加详情</div>`;
+  }
+
+  $("#auditDetailBody").innerHTML = bodyHtml;
+  $("#auditDetailMask").classList.remove("hidden");
+}
+
+function closeAuditDetail() {
+  $("#auditDetailMask").classList.add("hidden");
 }
 
 /* ---------------- 应用配置（环境变量 / 启动命令） ---------------- */
@@ -2498,6 +2593,8 @@ function aiInlineMarkdown(text) {
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
   s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  // 模型偶尔输出未闭合的 ** ，清掉残留标记，避免把星号直接显示给用户
+  s = s.replace(/\*\*/g, "");
   return s;
 }
 
@@ -3026,6 +3123,15 @@ function bindEvents() {
     renderAuditLogs();
   });
   $("#auditActionFilter").onchange = loadAuditLogs;
+  $("#auditBody").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-audit-id]");
+    if (!btn) return;
+    openAuditDetail(parseInt(btn.dataset.auditId, 10));
+  });
+  $("#auditDetailClose").onclick = $("#auditDetailOk").onclick = closeAuditDetail;
+  $("#auditDetailMask").addEventListener("click", (e) => {
+    if (e.target.id === "auditDetailMask") closeAuditDetail();
+  });
 
   // AI 运行分析
   $("#aiForm").addEventListener("submit", (e) => {

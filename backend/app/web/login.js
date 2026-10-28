@@ -242,7 +242,7 @@
       allowRegister = s.allow_register !== false;
       captchaEnabled = s.captcha_enabled !== false;
       document.getElementById("brandFoot").textContent =
-        "容器云平台 · v0.1.0" + (s.auth_enabled === false ? " · 未开启鉴权" : "");
+        "容器云平台" + (s.auth_enabled === false ? " · 未开启鉴权" : "");
 
       if (!captchaEnabled) {
         captchaField.classList.add("hidden");

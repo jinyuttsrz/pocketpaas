@@ -19,25 +19,26 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATIC_VERSION = str(int(time.time()))
 
 
-def _render_page(name: str) -> HTMLResponse:
+def _render_page(name: str, reset: bool = False) -> HTMLResponse:
     text = (WEB_DIR / name).read_text(encoding="utf-8")
     text = text.replace("__STATIC_VERSION__", STATIC_VERSION)
-    return HTMLResponse(
-        text,
-        headers={"Cache-Control": "no-cache, must-revalidate"},
-    )
+    headers = {"Cache-Control": "no-cache, must-revalidate"}
+    if reset:
+        # 访问 /?reset=1 时清掉本站浏览器缓存，用于浏览器顽固缓存旧 JS/CSS 的兜底
+        headers["Clear-Site-Data"] = '"cache"'
+    return HTMLResponse(text, headers=headers)
 
 
 @router.get("/", include_in_schema=False)
-def console() -> HTMLResponse:
+def console(reset: bool = False) -> HTMLResponse:
     """控制台首页：返回 SPA 入口，并注入静态资源版本号。"""
-    return _render_page("index.html")
+    return _render_page("index.html", reset=reset)
 
 
 @router.get("/login", include_in_schema=False)
-def login_page() -> HTMLResponse:
+def login_page(reset: bool = False) -> HTMLResponse:
     """登录 / 注册页：同样注入静态资源版本号。"""
-    return _render_page("login.html")
+    return _render_page("login.html", reset=reset)
 
 
 @router.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)

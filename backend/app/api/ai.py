@@ -26,8 +26,16 @@ def _http_error(exc: ai_service.AiError) -> HTTPException:
     return HTTPException(status_code=code, detail=str(exc))
 
 
+# 审计里保留问答正文，方便事后回看；过长时截断并标记，避免单条记录无限膨胀
+AUDIT_QUESTION_LIMIT = 2000
+AUDIT_ANSWER_LIMIT = 4000
+
+
 def _audit(db: Session, request: Request, user: User | None, action: str, result: dict) -> None:
-    target = (result.get("context_summary") or {}).get("target_app") or {}
+    summary = result.get("context_summary") or {}
+    target = summary.get("target_app") or {}
+    question = result.get("question") or ""
+    answer = result.get("answer") or ""
     audit_service.record_and_commit(
         db,
         user=user,
@@ -37,7 +45,11 @@ def _audit(db: Session, request: Request, user: User | None, action: str, result
         target_name="AI 助手",
         detail={
             "model": result.get("model"),
-            "question": (result.get("question") or "")[:200],
+            "scope": summary.get("scope"),
+            "scope_app": target.get("name"),
+            "question": question[:AUDIT_QUESTION_LIMIT],
+            "answer": answer[:AUDIT_ANSWER_LIMIT],
+            "truncated": len(answer) > AUDIT_ANSWER_LIMIT,
             "usage": result.get("usage"),
             "elapsed_ms": result.get("elapsed_ms"),
         },

@@ -650,6 +650,7 @@
                     <th>对象</th>
                     <th>详情</th>
                     <th>来源 IP</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody id="auditBody"></tbody>
@@ -1074,6 +1075,25 @@
       <div class="modal-foot">
         <button class="btn btn-ghost" id="editorCancel" type="button">取消</button>
         <button class="btn btn-primary" id="editorSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 审计详情弹窗（AI 运维问答在此展示完整提问与输出） -->
+  <div class="modal-mask hidden" id="auditDetailMask">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="auditDetailTitle">
+      <div class="modal-head">
+        <div>
+          <span class="eyebrow">AUDIT DETAIL</span>
+          <h2 id="auditDetailTitle">操作记录</h2>
+        </div>
+        <button class="icon-btn" id="auditDetailClose" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="auditDetailBody"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="auditDetailOk" type="button">关闭</button>
       </div>
     </div>
   </div>
